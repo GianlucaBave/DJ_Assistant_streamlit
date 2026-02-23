@@ -1,5 +1,7 @@
 # CrowdLoop AI: Live DJ Assistant & Track Predictor
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://djassistantapp-awegrk7fzpjo7kdtv5vd75.streamlit.app/)
+
 ## 📌 Project Overview
 **CrowdLoop AI** is a Streamlit-based prototype designed to assist DJs during live performances. The core idea is an AI assistant that dynamically recommends the next track to play by simulating the "reading of the room"—analyzing real-time crowd energy and dancefloor density to suggest the perfect song to keep the party alive or rescue a dying dancefloor.
 
@@ -37,13 +39,19 @@ The prototype heavily relies on `st.session_state` to maintain persistence acros
    cd DJ_Assistant_streamlit
    ```
 
-2. **Install dependencies:**
-   Make sure you have Pandas and Streamlit installed.
+2. **Create a virtual environment (optional but recommended):**
    ```bash
-   pip install streamlit pandas
+   python -m venv .venv
+   source .venv/bin/activate
    ```
 
-3. **Run the Streamlit app:**
+3. **Install dependencies:**
+   Make sure to install the required packages from the `requirements.txt` file.
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Run the Streamlit app:**
    ```bash
    streamlit run app.py
    ```
