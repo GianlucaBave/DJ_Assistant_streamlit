@@ -48,6 +48,20 @@ The prototype heavily relies on `st.session_state` to maintain persistence acros
    streamlit run app.py
    ```
 
+## 🌐 How to Deploy (Streamlit Community Cloud)
+
+The easiest way to share this application is through **Streamlit Community Cloud**.
+
+1. Go to [share.streamlit.io](https://share.streamlit.io/)
+2. Log in with your GitHub account.
+3. Click on **"New app"**.
+4. Configure the deployment:
+   - **Repository:** `GianlucaBave/DJ_Assistant_streamlit`
+   - **Branch:** `main`
+   - **Main file path:** `app.py`
+5. Click **"Deploy!"**
+The app will automatically install dependencies from `requirements.txt` and be live in a few minutes.
+
 ## 📝 Process Documentation (Deliverable 3 Summary)
 * **Ideation:** Started with the common issue DJs face: losing the crowd. The idea evolved into a "feedback loop" where the AI suggests tracks and the simulated crowd reacts, altering the state for the next suggestion.
 * **Data Gathering:** Sourced a dataset of tracks including audio features provided by Spotify (Danceability, Energy, Tempo, Key, etc.).
