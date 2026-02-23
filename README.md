@@ -1,6 +1,7 @@
 # CrowdLoop AI: Live DJ Assistant & Track Predictor
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://djassistantapp-awegrk7fzpjo7kdtv5vd75.streamlit.app/)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-black?logo=github)](https://github.com/GianlucaBave/DJ_Assistant_streamlit)
 
 ## 📌 Project Overview
 **CrowdLoop AI** is a Streamlit-based prototype designed to assist DJs during live performances. The core idea is an AI assistant that dynamically recommends the next track to play by simulating the "reading of the room"—analyzing real-time crowd energy and dancefloor density to suggest the perfect song to keep the party alive or rescue a dying dancefloor.
