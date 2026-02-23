@@ -33,8 +33,8 @@ The prototype heavily relies on `st.session_state` to maintain persistence acros
 
 1. **Clone the repository:**
    ```bash
-   git clone <your-repo-link>
-   cd <your-repo-directory>
+   git clone https://github.com/GianlucaBave/DJ_Assistant_streamlit.git
+   cd DJ_Assistant_streamlit
    ```
 
 2. **Install dependencies:**
