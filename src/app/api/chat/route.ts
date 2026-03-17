@@ -11,7 +11,8 @@ export async function POST(req: Request) {
 
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-    const playlistContext = activePlaylist 
+    const isActive = !!activePlaylist?.name;
+    const playlistContext = isActive
       ? `Active Playlist: "${activePlaylist.name}" (${activePlaylist.vibe}). Tracks: ${activePlaylist.tracks.join(', ')}.`
       : "No playlist selected. Use general knowledge to suggest tracks/vibes.";
 
