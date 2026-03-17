@@ -12,21 +12,26 @@ export async function POST(req: Request) {
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
     const isActive = !!activePlaylist?.name;
+    const availableLibrary = activePlaylist?.allPlaylists?.map((p: any) => `Playlist "${p.name}" (${p.vibe}): ${p.tracks.join(', ')}`).join('\n') || "No library data.";
+    
     const playlistContext = isActive
-      ? `Active Playlist: "${activePlaylist.name}" (${activePlaylist.vibe}). Tracks: ${activePlaylist.tracks.join(', ')}.`
-      : "No playlist selected. Use general knowledge to suggest tracks/vibes.";
+      ? `CURRENT ACTIVE PLAYLIST: "${activePlaylist.name}" (${activePlaylist.vibe}). Tracks: ${activePlaylist.tracks.join(', ')}.`
+      : "NO ACTIVE PLAYLIST SELECTED. You must suggest tracks from the overall LIBRARY below.";
 
     const systemPrompt = `You are the ultimate DJ Vibe Copilot—a high-end, expert DJ consultant.
-Style: Punchy, professional, and confident. No fluff, just pure elite club advice.
+STYLE: Punchy, professional, and confident. No fluff, just elite club advice.
 
-CONTEXT:
-Playing: "${currentTrack?.["Track Name"] || "Unknown"}" | ${currentTrack?.Tempo || "???"} BPM | ${currentTrack?.Key || "???"}
+CURRENT STATE:
+Track: "${currentTrack?.["Track Name"] || "Unknown"}" | ${currentTrack?.Tempo || "???"} BPM | ${currentTrack?.Key || "???"}
 Energy: ${energy}% | Crowd: ${crowdSize} dancers.
 ${playlistContext}
 
-YOUR MISSION:
-1. Identify the vibe immediately. 
-2. Recommend the KILLER next track from the context or general industry knowledge.
+FULL LIBRARY (ONLY CHOOSE TRACKS FROM HERE):
+${availableLibrary}
+
+STRICT RULES:
+1. Identify the vibe immediately.
+2. Recommend the best NEXT track from the provided tracks ONLY. Do NOT hallucinate popular songs that are not in the list.
 3. Give precise mixing advice (BPM match, harmonic blend, or energy boost).
 
 Max 2-3 short sentences. Be the partner every headline DJ needs.`;
