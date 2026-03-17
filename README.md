@@ -1,6 +1,6 @@
 # CrowdLoop AI — Live DJ Assistant & Track Predictor
 
-[![Vercel Deployment](https://img.shields.io/badge/Vercel-Deployed-black?logo=vercel)]([INSERT DEPLOYMENT URL])
+[![Vercel Deployment](https://img.shields.io/badge/Vercel-Deployed-black?logo=vercel)](https://dj-assistant-streamlit.vercel.app/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38B2AC?logo=tailwind-css)](https://tailwindcss.com/)
@@ -22,18 +22,20 @@ The system simulates a live DJ environment where the "room" state—crowd densit
 
 ---
 
-## 2. Concept & Evolution
+## 2. Evolution & Design Rationale
 
-### Concept
-CrowdLoop is not just a tracklist. It is a **Live DJ Copilot**. It tracks transitions, evaluates crowd feedback, and uses advanced prompt engineering to ensure that every recommendation is grounded in the DJ's actual track library. The goal is to provide a "second pair of eyes" on the dancefloor, allowing the DJ to focus on the technicals of the mix while the AI handles vibe-matching and harmonic analysis.
+The transition from the initial prototype (Assignment 1) to the current CrowdLoop architecture was driven by specific technical limitations encountered during the first phase of development.
 
-### Evolution from Assignment 1
-- **Assignment 1 (Streamlit Prototype):** Focused on a basic heuristic for crowd simulation and simple BPM-based track matching. It lacked real-time interactivity beyond basic UI sliders and had no intelligence layer.
-- **Assignment 2 (Full-Stack Next.js):** A complete ground-up rebuild.
-    - **Language**: Migrated from Python to **TypeScript**, ensuring type safety across complex session states.
-    - **Frontend**: Switched to **Next.js 15 (React 19)** for a more responsive, premium UI.
-    - **Intelligence**: Integrated an LLM layer that performs multi-turn reasoning and structured data analysis.
-    - **Reporting**: Added a dynamic PDF generation engine that exports AI-generated insights into professional documents.
+### Abandoning Streamlit
+While Streamlit was effective for a rapid proof-of-concept in Assignment 1, its execution model proved insufficient for a high-fidelity DJ dashboard. Streamlit’s "top-down" rerun model—where the entire script re-executes on every user interaction—precluded the implementation of true real-time streaming for LLM responses and complex, persistent UI animations like the spinning vinyl player. Furthermore, Streamlit offers limited control over granular CSS layouts, which was a barrier to achieving the premium, "mission control" aesthetic required for this assignment.
+
+### The Shift to TypeScript & Next.js
+Rebuilding the application in **TypeScript** was a deliberate choice to manage the increased complexity of the session state. In Assignment 2, the application must track an intertwined web of objects: track history, energy logs, crowd reactions, and multi-turn conversation history. TypeScript’s static typing ensures that these objects remain consistent as they are passed between frontend components and server-side API routes.
+
+**Next.js 15 (App Router)** was selected as the core framework because its built-in **Route Handlers** (`/api/chat`, `/api/analyze`) allowed for a secure, server-side integration of the LLM. This architectural decision keeps the sensitive `GROQ_API_KEY` entirely out of the client-side bundle while enabling the use of Node.js streams for immediate feedback.
+
+### Why Groq?
+In a live performance context, **latency is the primary enemy**. A DJ cannot pause for 3–5 seconds while an LLM processes a suggestion. Groq's LPU (Language Processing Unit) inference engine provides sub-500ms time-to-first-token, making the Vibe Copilot feel like a live partner rather than a slow search engine. This speed was the decisive factor in choosing Groq over competitors like OpenAI or Anthropic for this specific live-use case.
 
 ---
 
@@ -41,13 +43,13 @@ CrowdLoop is not just a tracklist. It is a **Live DJ Copilot**. It tracks transi
 
 | Layer | Technology | Rationale |
 |---|---|---|
-| **Framework** | Next.js 15 | Provides the performance and API routing necessary for a real-time dashboard. |
-| **Logic** | TypeScript 5 | Essential for managing complex state and track metadata. |
-| **Styling** | Tailwind CSS 4 | Used for a custom, glassmorphic dark-mode design system. |
-| **AI Engine** | Groq (Llama-3.3-70B) | Chosen for its ultra-low latency and sophisticated reasoning capabilities. |
-| **Charts** | Recharts | Visualizes energy trends to help DJs spot "dead moments" in their set. |
-| **PDF Engine** | jsPDF / Built-in | Converts session data into static performance artifacts. |
-| **Data** | Static JSON | High-performance local library storage (Tracks/Playlists). |
+| **Framework** | Next.js 15 | Enables secure API routes and high-performance server-side logic. |
+| **Logic** | TypeScript 5 | Essential for managing the complex, typed data structures of a DJ set. |
+| **Styling** | Tailwind CSS 4 | Custom design system optimized for dark-mode high-fidelity UIs. |
+| **AI Engine** | Groq (Llama-3.3-70B) | Industry-leading inference speeds critical for real-time performance. |
+| **Charts** | Recharts | Visualizes energy volatility to provide DJs with actionable visual feedback. |
+| **PDF Engine** | jsPDF / Custom | Serializes LLM-generated JSON into professional offline reports. |
+| **Data** | Static JSON | High-speed local indices for track and playlist metadata. |
 
 ---
 
@@ -63,10 +65,10 @@ CrowdLoop is not just a tracklist. It is a **Live DJ Copilot**. It tracks transi
 │   │       └── analyze/route.ts    # JSON analysis / report generator endpoint
 │   ├── components/
 │   │   ├── PdfReportTemplate.tsx   # Professional PDF layout and styling
-│   │   └── ...                     # Modular dashboard widgets
+│   │   └── ...                     # Modular dashboard widgets (Vinyl, Charts)
 │   ├── data/
 │   │   ├── tracks.json             # DB of 100+ tracks with BPM and Camelot Key metadata
-│   │   └── playlists.json          # Curated playlist definitions (Deep House, Peak, etc.)
+│   │   └── playlists.json          # Curated playlist definitions
 │   └── lib/
 │       ├── recommender.ts          # Heuristic logic for track scoring
 │       ├── pdfGenerator.ts         # Logic for session-to-PDF serialization
@@ -82,102 +84,110 @@ CrowdLoop is not just a tracklist. It is a **Live DJ Copilot**. It tracks transi
 ## 5. Core Features
 
 ### 1. Command Center (Left Sidebar)
-The sidebar serves as the DJ's logistical hub.
-- **Active Playlist Selector**: Choose between 4 professionally curated playlists. Selecting a playlist instantly reloads the track matcher and identifies the "lead-in" track.
-- **Now Playing Panel**: A high-density card showing current track metadata (BPM, Key) and a "Queue Context" that identifies the surrounding tracks in the active list.
-- **Vibe Copilot Chatbot (LLM-Powered)**:
-    - **Elite Persona**: Acts as a high-end DJ consultant.
-    - **Context Awareness**: Automatically "sees" your current BPM, Key, and the full contents of your library.
-    - **Streaming**: Responses appear letter-by-letter, providing a seamless live experience.
+- **Active Playlist Selector**: Four professionally curated vibe-based playlists. Selecting one instantly reloads the dashboard’s predictive engine.
+- **Now Playing Panel**: Displays rich metadata including Artist, BPM, and Camelot Key, alongside a dynamic "Queue Context" that identifies the surrounding tracks in the current playlist.
+- **Vibe Copilot Chatbot**: An LLM-powered assistant with an expert DJ persona, capable of suggesting tracks only from the available library.
 
 ### 2. Environmental Scanning (Center Header)
-Displays the "Health" of the room via three dedicated modules:
-- **Energy Level**: Monitors the current "vibe" percentage.
-- **Live Floor Scan**: A symmetric waveform visualization that pulse-syncs with the crowd's energy level.
-- **People Detected**: Simulated headcount monitoring dense, medium, or scattered dancefloor scenarios.
+Displays the "Health" of the room via a three-column synchronized grid:
+- **Energy Level**: Monitors the "vibe" percentage (0–99%).
+- **Live Floor Scan**: A symmetric waveform visualization that reacts to simulated energy peaks.
+- **People Detected**: Headcount monitoring (Dense/Medium/Scattered).
 
 ### 3. Vinyl Player (Center)
-The visual centerpiece of the dashboard.
-- **3D Record Animation**: A spinning vinyl that reacts to playback.
-- **Harmonic Mixing Toggle**: Filters recommendations to only show tracks within a +/- 1 semitone (Camelot Wheel) range.
-- **Navigation Controls**: Prev/Next buttons allow for quick sets-skipping during rehearsals.
+The visual centerpiece featuring a 3D-effect spinning vinyl. It includes a **Harmonic Mixing Toggle** to filter recommendations by musical compatibility and integrated playback navigation controls.
 
 ### 4. Performance Analytics (Right Sidebar)
-- **Energy Trend Chart**: A Recharts-powered area graph showing energy volatility over time.
-- **Learning Loop**: A live log of every DJ action and the resulting crowd reaction (e.g., "Mix Success: +5%").
-- **AI Set Analysis**: Click "View AI Report" to trigger a comprehensive post-session evaluation. The engine analyzes the entire set and returns a structured performance scorecard.
+- **Energy Trend Chart**: A real-time Recharts area graph tracking volatility over the last 30 intervals.
+- **Learning Loop**: A dynamic feedback log recording interactions and crowd reactions.
+- **AI Set Analysis**: Triggers the structured report generation engine.
 
 ---
 
 ## 6. LLM Integration Details (Non-Trivial Usage)
 
-As per the course requirements, CrowdLoop uses a **non-straightforward** LLM pattern that avoids simple "completion" calls in favor of complex prompt engineering and structured data processing.
+The core requirement for Assignment 2 was a **non-straightforward** LLM implementation. CrowdLoop achieves this through two distinct architectural patterns.
 
 ### Feature 1 — Vibe Copilot (Contextual Streaming Agent)
-This feature does more than answer questions. It acts as an **augmented reality layer** for the DJ's library.
-1. **Dynamic Prompt Injection**: Every messsage sent to the LLM is wrapped in a massive, hidden "System Perspective" block. This block contains the **entire track library**, the current **Live State** (BPM, Key, Energy), and the active playlist.
-2. **Stateful Conversation**: The model remembers the nuances of your previous requests (e.g., "They liked that Latin track, what's next?").
-3. **Strict Grounding**: The LLM is hard-coded to **never** suggest tracks from outside the library. This required complex "Negative Constraint" prompting to ensure 100% accuracy.
+This is not a generic chatbot. It is a **context-injected expert system**.
+
+- **System Prompt Construction**: The system prompt is rebuilt server-side on **every** API call. This is necessary because the DJ's state (BPM, Energy, Crowd) is volatile. The constructor assembles:
+    1.  The "Elite DJ Consultant" persona.
+    2.  A serialized snapshot of the **entire track library**.
+    3.  The current live session metrics (Active BPM, Key, Energy).
+    4.  Strict negative constraints to prevent hallucination.
+- **Multi-turn History**: The client maintains the `messages[]` array in React state, providing the model with conversational memory. By prepending the fresh system prompt to this history on every call, the model remains "aware" of the live environment even as it discusses past tracks.
+- **Streaming Implementation**: The `/api/chat` route leverages `TransformStream` to pipe tokens from Groq's SDK directly to the client. This provides perceived zero-latency, which is essential for a DJ who needs an answer *now*, not in 3 seconds.
+- **Grounding & Iteration**: Initial testing showed the model suggesting popular radio hits not in the library. This was solved through iterative prompt engineering—specifically, injecting the library as a strictly indexed block and instructing the LLM to cross-reference every suggestion against that list before emitting a result.
 
 ### Feature 2 — AI Set Analysis (Structured JSON Engine)
-The analysis engine treats the LLM as a **data processor** rather than a writer.
-1. **Data Deserialization**: The entire session log (BPM trends, track history, energy swings) is compressed into a data block and sent to the LLM.
-2. **JSON Constraint**: The LLM is instructed to return **only valid JSON**. This allows the frontend to parse the "thoughts" of the model and render them as high-precision UI elements (e.g., Score bars, bulleted lists).
-3. **Automated Reporting**: Once the JSON is parsed, it feeds into the **PDF Generation** layer, creating a tangible takeaway for the DJ.
+This feature treats the LLM as a **computational analyst** rather than a text generator.
+
+- **Data Serialization**: Upon clicking "View AI Report", the client serializes the full session history—including the energy timeline (30 samples), the feedback log, and the track sequence—into a condensed JSON context block.
+- **Structured Output Contract**: The model is forced to return **only** a valid JSON object matching a specific schema. This architecture enables the frontend to parse the "thoughts" of the model and render them as high-precision UI components (score bars, peak moment lists) rather than a wall of prose.
+- **Reliability Engineering**: To ensure 100% parseable JSON, the prompt uses explicit schema definitions and negative examples. We set the LLM `temperature` to 0 to ensure deterministic analysis across set reviews.
+- **Post-Processing & PDF**: The parsed JSON feeds both the UI Report Card and the `pdfGenerator.ts` module. The latter maps the structured AI insights directly onto a fixed-coordinate PDF template, creating a downloadable professional artifact.
 
 ---
 
-## 7. Setup & Local Development
+## 7. Build Process
+
+The development of CrowdLoop AI was a multi-stage engineering journey:
+
+1.  **Architecture Design**: I began by porting the heuristic recommendation logic (BPM/Key scoring) from Python to TypeScript. The decision was made early to store the 100+ tracks in a typed JSON format to facilitate instant filtering and clean LLM prompt injection.
+2.  **Dashboard Integration**: The UI was built around a centralized state in `page.tsx`. This central "brain" manages the synchronized animations between the vinyl player, the energy chart, and the floor scan waveform.
+3.  **Chatbot Implementation**: The Vibe Copilot was the first AI layer. The biggest challenge was the transition from static responses to a streaming model. Implementing the `ReadableStream` on the backend and an async reader on the frontend was critical for the app's professional feel.
+4.  **Analysis Pivot**: Originally, the Set Analysis returned a paragraph of text. I pivoted to the **Structured JSON** approach to allow for the dynamic "Report Card" UI and the automated PDF generation. This required the most significant amount of prompt tuning.
+5.  **PDF Generation**: The PDF template was built manually using absolute positioning. Mapping the nested objects from the LLM’s JSON output to the PDF’s layout required a custom serialization layer in `lib/pdfGenerator.ts`.
+
+---
+
+## 8. Setup & Local Development
 
 ### Prerequisites
 - Node.js 18.x or higher
-- A **Groq API Key** (Get one at [console.groq.com](https://console.groq.com/))
+- A **Groq API Key** ([console.groq.com](https://console.groq.com/))
 
 ### Installation
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/GianlucaBave/[REPO_NAME].git
-   cd [REPO_NAME]
-   ```
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-3. **Configure the environment**:
-   ```bash
-   cp .env.local.example .env.local
-   ```
-   Open `.env.local` and add your key:
-   `GROQ_API_KEY=gsk_your_key_here`
-
-4. **Launch the app**:
-   ```bash
-   npm run dev
-   ```
-   The dashboard will be available at `http://localhost:3000`.
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/GianlucaBave/DJ_Assistant_streamlit.git
+    cd DJ_Assistant_streamlit
+    ```
+2.  **Install dependencies**:
+    ```bash
+    npm install
+    ```
+3.  **Configure environment**:
+    ```bash
+    cp .env.local.example .env.local
+    ```
+    Add your key: `GROQ_API_KEY=your_key_here`
+4.  **Run**:
+    ```bash
+    npm run dev
+    ```
 
 ---
 
-## 8. Deployment
+## 9. Deployment
 
-CrowdLoop AI is optimized for **Vercel**. 
+CrowdLoop AI is deployed on **Vercel** with automatic redeployment on every push.
+Ensure `GROQ_API_KEY` is configured in your Vercel Project Settings under "Environment Variables".
 
-- **Auto-Redeploy**: Every push to the `main` branch triggers an automated build and deployment.
-- **Environment Management**: Ensure that `GROQ_API_KEY` is added to the **Environment Variables** section in your Vercel project settings.
-
-Live deployment URL: `[INSERT DEPLOYMENT URL]`
+**Live URL**: [https://dj-assistant-streamlit.vercel.app/](https://dj-assistant-streamlit.vercel.app/)
 
 ---
 
-## 9. Known Limitations & Future Work
+## 10. Known Limitations & Future Work
 
-While the current prototype fulfills all academic requirements, several areas are earmarked for future development:
-- **Real-time Sensor Integration**: Replacing the simulated energy levels with real-world computer vision data (e.g., using a webcam to detect dance move intensity).
-- **RL Sequence Agent**: Training a Reinforcement Learning agent to predict track sequences, allowing the Copilot to learn from a DJ's specific style over several weeks.
-- **Spotify/Tidal API Integration**: Moving beyond a static JSON library to allow DJs to sync their actual cloud-based libraries in real-time.
+Current limitations and planned enhancements for the next iteration:
+- **Websocket Integration**: Move from HTTP polling/streaming to WebSockets for even lower latency in environment simulation.
+- **Spotify API**: Integration with the Spotify Web API to allow DJs to use their real personal libraries instead of the static JSON dataset.
+- **Vision Layer**: Using the WebCam API to implement a real "Floor Scan" using TensorFlow.js to detect actual crowd density and movement.
 
 ---
 
-*This project was developed for Prototyping II - Assignment 2.*
+*Project developed for Prototyping II - Assignment 2.*
 *Author: Gianluca Bavelloni*
 *Institution: [INSERT UNIVERSITY NAME]*
