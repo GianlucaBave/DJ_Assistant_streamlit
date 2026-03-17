@@ -190,4 +190,3 @@ Current limitations and planned enhancements for the next iteration:
 
 *Project developed for Prototyping II - Assignment 2.*
 *Author: Gianluca Bavelloni*
-*Institution: [INSERT UNIVERSITY NAME]*
