@@ -5,8 +5,9 @@ export async function POST(req: Request) {
   try {
     const { energyHistory, crowdHistory, feedbackLog, currentTrack } = await req.json();
 
+    console.log('Generating report for track:', currentTrack?.["Track Name"]);
     if (!process.env.GROQ_API_KEY) {
-      console.warn('GROQ_API_KEY is missing. Returning 500.');
+      console.warn('GROQ_API_KEY is missing in environment variables.');
       return NextResponse.json({ error: 'GROQ_API_KEY is not set in environment variables.' }, { status: 500 });
     }
 
