@@ -1,0 +1,64 @@
+=========================================
+CROWDLOOP: AI DJ ADVISOR - DOCUMENTATION
+=========================================
+
+1. OVERVIEW
+CrowdLoop is a high-fidelity, real-time DJ dashboard designed to assist DJs during live sets. 
+It combines environmental scanning (crowd energy and density) with AI-powered track 
+recommendations and automated performance reporting.
+
+2. CORE ARCHITECTURE
+- Framework: Next.js (React 19 + TypeScript 5)
+- Styling: Tailwind CSS (Modern Dark Mode Interface)
+- AI Engine: Groq SDK (Powered by Llama-3.3-70B-Versatile)
+- Data Model: Static JSON libraries for Tracks and Curated Playlists.
+
+3. KEY FEATURES
+
+A. THE COMMAND CENTER (SIDEBAR)
+- Active Playlist Selector: 4 curated playlists with distinct vibes (Deep House, Warm-Up, Peak Hour, Afro/Festival). Selecting a playlist auto-loads the first track.
+- Integrated Now Playing: Displays the current track with real-time "In Queue" context (Previous/Current/Next) based on the active playlist.
+- Vibe Copilot Chatbot:
+  - Elite DJ consultant personality.
+  - Strict library awareness: Only suggests tracks existing in the DJ's database.
+  - Contextual advice: Considers BPM, Key, Energy Level, and Crowd Density.
+  - Performance: Uses streaming responses for zero-latency interactions.
+
+B. ENVIRONMENTAL SCANNING (CENTER HEADER)
+- 3-Column Grid Layout:
+  1. Energy Level: Real-time 0-99% simulation with visual progress markers.
+  2. Live Floor Scan: Symmetric frequency/occupancy waveform animation synchronized with energy.
+  3. People Detected: Live headcount simulation and dancefloor occupancy status.
+
+C. THE VINYL PLAYER (CENTER MAIN)
+- 3D-effect spinning vinyl animation.
+- Harmonic Mixing Toggle: Positioned in a dedicated floating corner for ergonomic access.
+- Interactive Track Navigation: Previous/Next skip buttons integrated directly into the player card.
+
+D. PERFORMANCE ANALYTICS (RIGHT SIDEBAR)
+- Performance Graph: Real-time area chart (Recharts) visualizing energy trends over the last 30 intervals.
+- Learning Loop: Dynamic feedback log tracking track transitions and crowd reactions.
+- AI Set Analysis:
+  - "View AI Report" button triggering a deep-dive JSON analysis.
+  - Generates a professional report covering: Overall Score, Energy Trend, Crowd Retention, Peak Moments, and Weaknesses.
+
+E. REPORTING SYSTEM
+- Dynamic PDF Generation: Built-in engine to convert performance data and AI analysis into a shareable PDF report.
+- Custom Template: Sophisticated layout including charts, summaries, and actionable insights.
+
+4. TECHNICAL SPECIFICATIONS
+- Environment Variables: Required `GROQ_API_KEY` for AI functionalities.
+- Route Handlers:
+  - `/api/chat`: Handles streaming LLM interactions with strict library context.
+  - `/api/analyze`: Processes session data for deep-dive set reporting.
+- Production Optimized: Configured for seamless deployment on Vercel with automatic redeploy on push.
+
+5. FILE STRUCTURE
+- /src/app: Main routes and API handlers.
+- /src/data: JSON track and playlist libraries.
+- /src/components: Modular UI blocks (Vinyl player, PDF templates).
+- /src/lib: Core logic for AI analysis and PDF generation.
+
+=========================================
+BUILDING THE FUTURE OF PERFORMANCE DJING
+=========================================
