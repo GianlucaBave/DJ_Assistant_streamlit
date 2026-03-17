@@ -1,0 +1,74 @@
+[
+  {
+    "id": "deep-house-midnight",
+    "name": "Deep House Midnight",
+    "emoji": "🌙",
+    "vibe": "Late night, hypnotic, intimate",
+    "tracks": [
+      "Never Walk Alone",
+      "How You Feel (ft Leven Kali)",
+      "and it felt like..",
+      "Little Things x Gypsy Woman - L BEATS MASHUP",
+      "Edge of Desire",
+      "Be Where I Am",
+      "The Weekend - Radio Edit",
+      "That's Right - Edit",
+      "Move Your Body",
+      "Be Where I Am"
+    ]
+  },
+  {
+    "id": "warm-up-groovy",
+    "name": "Warm-Up Groovy",
+    "emoji": "🌅",
+    "vibe": "Smooth start, building energy, vocal house",
+    "tracks": [
+      "That's Right - Edit",
+      "Edge of Desire",
+      "Be Where I Am",
+      "Move Your Body",
+      "One Kiss (with Dua Lipa)",
+      "Sound of You (ft TEED)",
+      "Never Walk Alone",
+      "Ease My Mind",
+      "How You Feel (ft Leven Kali)",
+      "TOO COOL TO BE CARELESS"
+    ]
+  },
+  {
+    "id": "peak-hour-bangers",
+    "name": "Peak Hour Bangers",
+    "emoji": "🔥",
+    "vibe": "High energy, full floor, anthems",
+    "tracks": [
+      "Gotta Let You Go - Original '95 Radio Edit",
+      "Stay",
+      "The Night Trip",
+      "Tondo",
+      "Your Body - Andy Van Remix Video Edit",
+      "Funk U Want",
+      "I Want Your Soul",
+      "Afraid To Feel",
+      "Hold On, Let Go",
+      "World Hold on (Children of the Sky) [Radio Edit]"
+    ]
+  },
+  {
+    "id": "afro-festival",
+    "name": "Afro & Festival",
+    "emoji": "🌍",
+    "vibe": "Tribal, percussive, organic festival energy",
+    "tracks": [
+      "Verano En NY",
+      "PanAm (Radio Edit)",
+      "Boogie Time",
+      "Glow",
+      "Love Generation - Edit",
+      "The Weekend - Radio Edit",
+      "Lose My Mind",
+      "So Hooked On Your Lovin - Mousse T.'s Extended Disco Shizzle",
+      "Tondo",
+      "Funk U Want"
+    ]
+  }
+]
