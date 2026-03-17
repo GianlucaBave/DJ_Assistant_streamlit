@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
 export async function POST(req: Request) {
   try {
     const { energyHistory, crowdHistory, feedbackLog, currentTrack } = await req.json();
 
     if (!process.env.GROQ_API_KEY) {
+      console.warn('GROQ_API_KEY is missing. Returning 500.');
       return NextResponse.json({ error: 'GROQ_API_KEY is not set in environment variables.' }, { status: 500 });
     }
+
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
     const energyLines = energyHistory.map((v: number, i: number) => `  Turn ${i}: Energy = ${v}%`).join('\n');
     const crowdLines = crowdHistory.map((v: number, i: number) => `  Turn ${i}: Crowd = ${v} people`).join('\n');

@@ -1,14 +1,15 @@
 import Groq from 'groq-sdk';
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
 export async function POST(req: Request) {
   try {
     const { messages, currentTrack, energy, crowdSize, activePlaylist } = await req.json();
 
     if (!process.env.GROQ_API_KEY) {
+      console.warn('GROQ_API_KEY is missing. Returning 500.');
       return new Response('GROQ_API_KEY not set', { status: 500 });
     }
+
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
     const playlistContext = activePlaylist 
       ? `Active Playlist: "${activePlaylist.name}" (${activePlaylist.vibe}). Tracks: ${activePlaylist.tracks.join(', ')}.`
