@@ -2,10 +2,13 @@ export interface Track {
   "Track Name": string;
   "Artist Name(s)": string;
   "Album Name"?: string;
+  Genres?: string | null;
   Energy: number;
+  Danceability?: number;
   Popularity: number;
   Tempo: number;
   Key: string;
+  file?: string | null;
 }
 
 export interface SessionState {
