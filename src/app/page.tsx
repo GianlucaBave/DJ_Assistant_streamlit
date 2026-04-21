@@ -53,6 +53,17 @@ export default function Dashboard() {
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [librarySearch, setLibrarySearch] = useState("");
 
+  // Set of MP3 filenames the server can actually stream. Lets us filter out
+  // tracks whose mapped file exists in tracks.json but isn't on disk in this
+  // environment (e.g. Vercel ships only the compressed demo subset).
+  const [availableFiles, setAvailableFiles] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    fetch("/api/available-tracks")
+      .then((r) => (r.ok ? r.json() : { files: [] }))
+      .then((d: { files?: string[] }) => setAvailableFiles(new Set(d.files ?? [])))
+      .catch(() => setAvailableFiles(new Set()));
+  }, []);
+
   const router = useRouter();
 
   useEffect(() => {
@@ -202,9 +213,14 @@ export default function Dashboard() {
   // When paused / no file, fall back to the simulated track-driven value.
   const displayEnergy = isPlaying && liveAudioEnergy != null ? liveAudioEnergy : energy;
 
-  // Only suggest tracks we can actually play — tracks without a mapped MP3
-  // would load to silence, which is a worse UX than just not showing them.
-  const playableTracks = tracks.filter((t) => t.file);
+  // Only suggest tracks we can actually play. Primary filter is tracks.json
+  // `file` mapping; once the server's real on-disk listing arrives we further
+  // restrict to files that exist in this environment.
+  const playableTracks = tracks.filter((t) => {
+    if (!t.file) return false;
+    if (!availableFiles) return true; // before listing loads, optimistic
+    return availableFiles.has(t.file);
+  });
   const suggestions = getRecommendations(
     playableTracks,
     currentTrack.Tempo,
@@ -282,10 +298,12 @@ export default function Dashboard() {
     if (listToNavigate.length === 0) return;
 
     // Skip over tracks with no MP3 file so we never silently land on a dead track.
-    const playableList = listToNavigate.filter((t) => t.file);
+    const isReallyPlayable = (t: Track) =>
+      !!t.file && (!availableFiles || availableFiles.has(t.file));
+    const playableList = listToNavigate.filter(isReallyPlayable);
     if (playableList.length === 0) {
       // Nothing playable in this playlist — fall back to any playable track
-      const anyPlayable = tracks.find((t) => t.file);
+      const anyPlayable = tracks.find(isReallyPlayable);
       if (anyPlayable) playTrack(anyPlayable, false);
       return;
     }
@@ -517,11 +535,16 @@ export default function Dashboard() {
                     key={pl.id}
                     onClick={() => {
                       setActivePlaylist(pl.id === activePlaylist?.id ? null : pl);
-                      // Auto-load first *playable* track of playlist (skip any without MP3)
+                      // Auto-load first *actually streamable* track of the playlist
                       if (pl.id !== activePlaylist?.id) {
                         const firstPlayable = pl.tracks
                           .map((name) => tracks.find((t) => t["Track Name"] === name))
-                          .find((t): t is Track => !!t && !!t.file);
+                          .find(
+                            (t): t is Track =>
+                              !!t &&
+                              !!t.file &&
+                              (!availableFiles || availableFiles.has(t.file)),
+                          );
                         if (firstPlayable) playTrack(firstPlayable, false);
                       }
                     }}

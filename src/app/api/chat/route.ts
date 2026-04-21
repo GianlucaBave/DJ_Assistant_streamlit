@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import tracksData from "@/data/tracks.json";
 import playlistsData from "@/data/playlists.json";
 import { semanticSearch } from "@/lib/rag";
+import { listAvailableAudio } from "@/lib/audioFiles";
 import type { Track, Playlist } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -97,6 +98,7 @@ async function executeServerTool(
     const query = String(input.query ?? "");
     const topK = Math.max(1, Math.min(10, Number(input.topK ?? 5)));
     const hits = await semanticSearch(query, topK);
+    const available = listAvailableAudio();
     const enriched = hits.map((h) => {
       const t = tracks.find((tr) => tr["Track Name"] === h.trackName);
       return {
@@ -108,7 +110,7 @@ async function executeServerTool(
         energy: t?.Energy ?? null,
         danceability: t?.Danceability ?? null,
         genres: t?.Genres ?? null,
-        playable: !!t?.file,
+        playable: !!(t?.file && available.has(t.file)),
       };
     });
     return JSON.stringify(enriched);
