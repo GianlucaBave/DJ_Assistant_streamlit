@@ -5,7 +5,25 @@ import { resolve, basename, normalize } from "node:path";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Primary: user's full-quality local library (gitignored, dev-only).
+// Fallback: a subset of compressed demo MP3s shipped with the repo so the
+// deployed Vercel build can actually play audio.
 const SONGS_DIR = resolve(process.cwd(), "songs");
+const DEMO_DIR = resolve(process.cwd(), "public", "demo-songs");
+
+function resolveAudioPath(safeName: string): string | null {
+  for (const base of [SONGS_DIR, DEMO_DIR]) {
+    const p = resolve(base, safeName);
+    if (!p.startsWith(base + "/")) continue;
+    try {
+      statSync(p);
+      return p;
+    } catch {
+      /* keep looking */
+    }
+  }
+  return null;
+}
 
 export async function GET(
   req: NextRequest,
@@ -14,10 +32,10 @@ export async function GET(
   const { filename } = await params;
   const decoded = decodeURIComponent(filename);
   const safeName = basename(normalize(decoded));
-  const fullPath = resolve(SONGS_DIR, safeName);
 
-  if (!fullPath.startsWith(SONGS_DIR + "/")) {
-    return new Response("Forbidden", { status: 403 });
+  const fullPath = resolveAudioPath(safeName);
+  if (!fullPath) {
+    return new Response("Not found", { status: 404 });
   }
 
   let stats;

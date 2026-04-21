@@ -42,6 +42,8 @@ yarn-error.log*
 /public/videos/*.mov
 /public/videos/*.webm
 !/public/videos/.gitkeep
+# ...except the compressed demo which ships to Vercel
+!/public/videos/dj-set-demo.mp4
 
 # vercel
 .vercel
