@@ -66,6 +66,6 @@ Throughout, AI (Claude Code) was used as a pair programmer: I described intent a
 
 ## Limitations
 
-- `/songs/` is local-only. The deployed Vercel build shows the agent, RAG, and analysis features working identically, but plays no audio and falls back to the simulated energy curve — the real-audio demo requires running locally with MP3s in place.
-- Embedding inference on Vercel cold starts is slow (~2 s to load the model on first request). The embeddings *file* is small (~460 KB); the model itself is ~90 MB and download-cached to `node_modules/@xenova/transformers/.cache/` on first invocation.
+- The full 45-track `/songs/` library and full-quality DJ-set video are local-only (each file is over GitHub's 100 MB per-file limit or too bulky for a serverless bundle). The Vercel deploy ships **8 compressed demo tracks** (`/public/demo-songs/`, 96 kbps) and a **compressed 720p version of the camera video** (`/public/videos/dj-set-demo.mp4`) so the agent, RAG, playback, and Connect-Camera flow all work end-to-end on the hosted URL too. The audio route prefers `/songs/` (full quality) and falls back to the compressed set transparently.
+- Dense-vector RAG runs locally via `@xenova/transformers` (dev-only dependency); on Vercel the package isn't in the serverless function bundle, so the agent's `searchTracks` tool falls back to a lexical score over a rich per-track description (name + artist + genres + BPM/energy bands + playlist tags). Ranking is still content-aware, just not in the 384-dim semantic space.
 - BPM is still metadata-derived, not audio-measured. Extending the `AnalyserNode` pipeline with autocorrelation-based BPM detection is the natural next step — noted in README §10.

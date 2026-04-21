@@ -751,7 +751,7 @@ export default function Dashboard() {
                 {cameraConnected && (
                   <>
                     <video
-                      src="/videos/dj-set-app.mp4"
+                      src="/videos/dj-set-demo.mp4"
                       autoPlay
                       muted
                       loop
