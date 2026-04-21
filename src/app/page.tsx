@@ -221,8 +221,13 @@ export default function Dashboard() {
     if (!availableFiles) return true; // before listing loads, optimistic
     return availableFiles.has(t.file);
   });
+  // Exclude the currently-playing track — suggesting the same track that's
+  // already on the deck is pointless.
+  const recommendPool = playableTracks.filter(
+    (t) => t["Track Name"] !== currentTrack["Track Name"],
+  );
   const suggestions = getRecommendations(
-    playableTracks,
+    recommendPool,
     currentTrack.Tempo,
     energy,
     harmonicMode,
