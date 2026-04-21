@@ -34,6 +34,15 @@ yarn-error.log*
 .env*
 !.env.local.example
 
+# local audio library — not committed (user-local)
+/songs/
+
+# large video files (kept local; too big for GitHub)
+/public/videos/*.mp4
+/public/videos/*.mov
+/public/videos/*.webm
+!/public/videos/.gitkeep
+
 # vercel
 .vercel
 

@@ -1,10 +1,13 @@
 # CrowdLoop AI — Live DJ Assistant & Track Predictor
 
 [![Vercel Deployment](https://img.shields.io/badge/Vercel-Deployed-black?logo=vercel)](https://dj-assistant-streamlit.vercel.app/)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38B2AC?logo=tailwind-css)](https://tailwindcss.com/)
-[![Groq AI](https://img.shields.io/badge/Groq-Llama--3.3--70B-orange)](https://groq.com/)
+[![Anthropic](https://img.shields.io/badge/Anthropic-Claude_Haiku_4.5-D97757)](https://www.anthropic.com/)
+[![RAG](https://img.shields.io/badge/RAG-MiniLM_L6_v2-5B21B6)](https://huggingface.co/Xenova/all-MiniLM-L6-v2)
+
+> **Assignment 3 (current version):** The chatbot is now an **agent** that actually controls the deck via tool use (play, pause, skip, switch playlist, semantic search). The track library is **RAG-indexed** (local 384-dim embeddings, cosine similarity). The dashboard now plays **real audio** from a local MP3 folder, and the energy meter reads a **live RMS signal** from the Web Audio API instead of `Math.random()`. See §11 — *Assignment 3 Additions* for the full delta vs. A2.
 
 ## Why CrowdLoop AI?
 
@@ -16,9 +19,10 @@ For many DJs, particularly those early in their careers or performing in high-pr
 
 **CrowdLoop AI** is a high-fidelity, real-time DJ performance dashboard designed and built as **Assignment 2** for a university course on prototyping. The project represents a significant evolution from its predecessor, moving from a static Python-based simulation to a full-stack Next.js application with deep LLM (Large Language Model) integration.
 
-The system simulates a live DJ environment where the "room" state—crowd density, energy levels, and harmonic compatibility—is constantly monitored. Leveraging the **Groq Llama-3.3-70B** model, CrowdLoop provides two non-trivial AI features:
-1. **Vibe Copilot**: A stateful, library-aware chatbot designed to act as a Headline DJ's partner.
+The system simulates a live DJ environment where the "room" state—crowd density, energy levels, and harmonic compatibility—is constantly monitored. Leveraging **Anthropic Claude Haiku 4.5** with native tool-calling, CrowdLoop provides three non-trivial AI features:
+1. **Vibe Copilot Agent**: A tool-calling agent that actually controls the deck — searches the library via RAG, plays tracks, skips, and switches playlists in response to natural-language commands.
 2. **AI Set Analysis**: A post-session performance engine that converts telemetry data into structured insights and professional reports.
+3. **Semantic Library Search (RAG)**: A local, embedding-based retrieval system (`all-MiniLM-L6-v2`, 384-dim) that powers the agent's `searchTracks` tool — no external embedding API required.
 
 ---
 
@@ -34,8 +38,8 @@ Rebuilding the application in **TypeScript** was a deliberate choice to manage t
 
 **Next.js 15 (App Router)** was selected as the core framework because its built-in **Route Handlers** (`/api/chat`, `/api/analyze`) allowed for a secure, server-side integration of the LLM. This architectural decision keeps the sensitive `GROQ_API_KEY` entirely out of the client-side bundle while enabling the use of Node.js streams for immediate feedback.
 
-### Why Groq?
-In a live performance context, **latency is the primary enemy**. A DJ cannot pause for 3–5 seconds while an LLM processes a suggestion. Groq's LPU (Language Processing Unit) inference engine provides sub-500ms time-to-first-token, making the Vibe Copilot feel like a live partner rather than a slow search engine. This speed was the decisive factor in choosing Groq over competitors like OpenAI or Anthropic for this specific live-use case.
+### From Groq to Anthropic Claude (A3)
+A2 used Groq Llama-3.3-70B for its ultra-low latency. For A3, the requirement shifted from "fast chat" to "agentic control" — Claude Haiku 4.5 supports native tool use and structured outputs, which were needed to turn the copilot from a describer into a doer. Haiku 4.5 is also Anthropic's cheapest current model (~$1/MTok in / $5/MTok out), so the cost profile stays friendly while the capabilities jump. Typical turn latency with tool-chaining is 3–5 seconds end-to-end, which is acceptable because the agent is now *executing actions*, not just chatting.
 
 ---
 
@@ -43,13 +47,15 @@ In a live performance context, **latency is the primary enemy**. A DJ cannot pau
 
 | Layer | Technology | Rationale |
 |---|---|---|
-| **Framework** | Next.js 15 | Enables secure API routes and high-performance server-side logic. |
+| **Framework** | Next.js 16 | Enables secure API routes and high-performance server-side logic. |
 | **Logic** | TypeScript 5 | Essential for managing the complex, typed data structures of a DJ set. |
 | **Styling** | Tailwind CSS 4 | Custom design system optimized for dark-mode high-fidelity UIs. |
-| **AI Engine** | Groq (Llama-3.3-70B) | Industry-leading inference speeds critical for real-time performance. |
+| **AI Engine** | Anthropic Claude Haiku 4.5 | Native tool use, structured outputs, cost-efficient ($1/$5 per MTok). |
+| **RAG** | `@xenova/transformers` + `all-MiniLM-L6-v2` | Local 384-dim embeddings; zero external API, runs in Node. |
+| **Audio** | Web Audio API (`AnalyserNode`) | Real-time RMS extraction from the playing MP3 → live energy meter. |
 | **Charts** | Recharts | Visualizes energy volatility to provide DJs with actionable visual feedback. |
 | **PDF Engine** | jsPDF / Custom | Serializes LLM-generated JSON into professional offline reports. |
-| **Data** | Static JSON | High-speed local indices for track and playlist metadata. |
+| **Data** | Static JSON + `track_embeddings.json` | Typed library + pre-computed embedding index for semantic search. |
 
 ---
 
@@ -59,21 +65,28 @@ In a live performance context, **latency is the primary enemy**. A DJ cannot pau
 /
 ├── src/
 │   ├── app/
-│   │   ├── page.tsx                # Main dashboard entry point & state management
+│   │   ├── page.tsx                # Main dashboard + audio playback + agent action dispatch
 │   │   └── api/
-│   │       ├── chat/route.ts       # LLM Chatbot endpoint (Streaming + Context injection)
-│   │       └── analyze/route.ts    # JSON analysis / report generator endpoint
+│   │       ├── chat/route.ts       # Tool-calling agent loop (NDJSON streaming, 6 tools)
+│   │       ├── analyze/route.ts    # Structured-JSON set analysis via Claude
+│   │       └── audio/[filename]/route.ts  # MP3 streaming with byte-range support
 │   ├── components/
-│   │   ├── PdfReportTemplate.tsx   # Professional PDF layout and styling
-│   │   └── ...                     # Modular dashboard widgets (Vinyl, Charts)
+│   │   └── PdfReportTemplate.tsx   # Professional PDF layout and styling
 │   ├── data/
-│   │   ├── tracks.json             # DB of 100+ tracks with BPM and Camelot Key metadata
-│   │   └── playlists.json          # Curated playlist definitions
+│   │   ├── tracks.json             # 58 tracks with BPM, Camelot Key, Energy, `file` mapping
+│   │   ├── playlists.json          # Curated playlist definitions (4 vibes)
+│   │   └── track_embeddings.json   # Pre-computed 384-dim embeddings for RAG (~460KB)
 │   └── lib/
-│       ├── recommender.ts          # Heuristic logic for track scoring
-│       ├── pdfGenerator.ts         # Logic for session-to-PDF serialization
+│       ├── rag.ts                  # Semantic search — loads embeddings, embeds queries, cosine sim
+│       ├── recommender.ts          # Heuristic BPM/Key scoring (still used for AI Track Predictor)
+│       ├── pdfGenerator.ts         # Session-to-PDF serialization
 │       └── types.ts                # Application-wide interfaces
-├── public/                         # Visual assets and simulation images
+├── scripts/
+│   ├── map-audio-files.mjs         # Fuzzy-matches MP3 filenames in /songs/ to tracks.json
+│   ├── embed-tracks.mjs            # Offline embedding computation (runs MiniLM-L6-v2)
+│   └── test-rag.mjs                # Sanity-check script for the RAG pipeline
+├── songs/                          # Local MP3 library (gitignored — user-local)
+├── public/                         # Visual assets
 ├── .env.local.example              # Template for environment variables
 ├── package.json                    # Dependency and script manifests
 └── README.md                       # This documentation
@@ -146,7 +159,7 @@ The development of CrowdLoop AI was a multi-stage engineering journey:
 
 ### Prerequisites
 - Node.js 18.x or higher
-- A **Groq API Key** ([console.groq.com](https://console.groq.com/))
+- An **Anthropic API Key** ([console.anthropic.com](https://console.anthropic.com/))
 
 ### Installation
 1.  **Clone the repository**:
@@ -162,8 +175,13 @@ The development of CrowdLoop AI was a multi-stage engineering journey:
     ```bash
     cp .env.local.example .env.local
     ```
-    Add your key: `GROQ_API_KEY=your_key_here`
-4.  **Run**:
+    Add your key: `ANTHROPIC_API_KEY=sk-ant-your_key_here`
+4.  **(Optional) Drop an MP3 library into `/songs/`**, then map filenames to the library and rebuild embeddings:
+    ```bash
+    node scripts/map-audio-files.mjs    # fuzzy-matches MP3s → tracks.json
+    node scripts/embed-tracks.mjs       # ~1 min; downloads MiniLM-L6-v2 on first run
+    ```
+5.  **Run**:
     ```bash
     npm run dev
     ```
@@ -173,7 +191,9 @@ The development of CrowdLoop AI was a multi-stage engineering journey:
 ## 9. Deployment
 
 CrowdLoop AI is deployed on **Vercel** with automatic redeployment on every push.
-Ensure `GROQ_API_KEY` is configured in your Vercel Project Settings under "Environment Variables".
+Ensure `ANTHROPIC_API_KEY` is configured in your Vercel Project Settings under "Environment Variables".
+
+> Note on audio: the `/songs/` folder is gitignored (user-local library). In a deployed environment the dashboard still works — it just shows "Preview unavailable" on tracks without an MP3 and falls back to the simulated energy curve. The agent, RAG, and analysis features work identically with or without local audio.
 
 **Live URL**: [https://dj-assistant-streamlit.vercel.app/](https://dj-assistant-streamlit.vercel.app/)
 
@@ -181,12 +201,41 @@ Ensure `GROQ_API_KEY` is configured in your Vercel Project Settings under "Envir
 
 ## 10. Known Limitations & Future Work
 
-Current limitations and planned enhancements for the next iteration:
-- **Websocket Integration**: Move from HTTP polling/streaming to WebSockets for even lower latency in environment simulation.
-- **Spotify API**: Integration with the Spotify Web API to allow DJs to use their real personal libraries instead of the static JSON dataset.
-- **Vision Layer**: Using the WebCam API to implement a real "Floor Scan" using TensorFlow.js to detect actual crowd density and movement.
+- **Websocket Integration**: Move from HTTP streaming to WebSockets for even lower latency in the agent loop.
+- **Spotify API**: Enrich tracks with real Spotify audio features (danceability, valence) to replace metadata gaps.
+- **Vision Layer**: Use the WebCam API + TensorFlow.js for actual crowd density / movement detection.
+- **BPM detection**: Extend the Web Audio analyser from RMS energy to autocorrelation-based BPM so the reported tempo also becomes live-measured, not metadata-derived.
+- **Agent memory**: Persist past sessions + their outcomes, and RAG over them so the copilot learns which transitions *actually* worked for this DJ.
 
 ---
 
-*Project developed for Prototyping II - Assignment 2.*
+## 11. Assignment 3 Additions
+
+A3 is graded independently, so the delta from A2 is made explicit here:
+
+| Area | Assignment 2 | Assignment 3 |
+|---|---|---|
+| **LLM provider** | Groq (Llama-3.3-70B) | Anthropic Claude Haiku 4.5 |
+| **Copilot shape** | Single-prompt chatbot (describes suggestions) | Tool-calling **agent** with 6 tools (searches, plays, skips, switches playlist) |
+| **Library retrieval** | Whole library stuffed into the system prompt | **RAG**: pre-computed 384-dim embeddings + cosine similarity (local `all-MiniLM-L6-v2`) |
+| **Audio playback** | None — vinyl animation was cosmetic only | **Real MP3 playback** from a local `/songs/` folder with range-request streaming and seeking |
+| **Energy meter** | `Math.random()` perturbations around track metadata | **Live RMS** from `AnalyserNode` on the actual audio buffer |
+| **Stream protocol** | Plain text chunks | **NDJSON events** (`text` / `tool_use` / `action` / `done`) — client dispatches actions in real time |
+
+### New tools available to the agent
+- `searchTracks(query, topK)` — server-side RAG (the A3 headline feature)
+- `playTrack(trackName)` / `pauseTrack()` / `skipNext()` / `skipPrevious()` — client-side deck control
+- `switchPlaylist(playlistId)` — swaps the active vibe
+
+### Why these choices
+The A3 rubric rewards **substantial refinement**. Each change maps to a specific rubric example:
+- "Chatbot → RAG" → the embedding index + semantic search
+- "External API → own API" → the tool-calling agent loop is a custom orchestration API on top of the Messages endpoint
+- "Accuracy" → real audio playback + real RMS energy kill the `Math.random()` simulation in favor of measurement
+
+The 2-pager describing the additions is at `ASSIGNMENT3_ADDITIONS.md`.
+
+---
+
+*Project developed for Prototyping II - Assignment 3 (optional final submission).*
 *Author: Gianluca Bavelloni*

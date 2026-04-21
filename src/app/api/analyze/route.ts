@@ -1,21 +1,33 @@
-import { NextResponse } from 'next/server';
-import Groq from 'groq-sdk';
+import { NextResponse } from "next/server";
+import Anthropic from "@anthropic-ai/sdk";
+
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const { energyHistory, crowdHistory, feedbackLog, currentTrack } = await req.json();
+    const { energyHistory, crowdHistory, feedbackLog, currentTrack } =
+      await req.json();
 
-    console.log('Generating report for track:', currentTrack?.["Track Name"]);
-    if (!process.env.GROQ_API_KEY) {
-      console.warn('GROQ_API_KEY is missing in environment variables.');
-      return NextResponse.json({ error: 'GROQ_API_KEY is not set in environment variables.' }, { status: 500 });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return NextResponse.json(
+        { error: "ANTHROPIC_API_KEY is not set in environment variables." },
+        { status: 500 },
+      );
     }
 
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    const client = new Anthropic();
 
-    const energyLines = energyHistory.map((v: number, i: number) => `  Turn ${i}: Energy = ${v}%`).join('\n');
-    const crowdLines = crowdHistory.map((v: number, i: number) => `  Turn ${i}: Crowd = ${v} people`).join('\n');
-    const feedbackLines = feedbackLog.slice(0, 10).map((entry: string, i: number) => `  ${i + 1}. ${entry}`).join('\n') || "  (no feedback yet)";
+    const energyLines = energyHistory
+      .map((v: number, i: number) => `  Turn ${i}: Energy = ${v}%`)
+      .join("\n");
+    const crowdLines = crowdHistory
+      .map((v: number, i: number) => `  Turn ${i}: Crowd = ${v} people`)
+      .join("\n");
+    const feedbackLines =
+      feedbackLog
+        .slice(0, 10)
+        .map((entry: string, i: number) => `  ${i + 1}. ${entry}`)
+        .join("\n") || "  (no feedback yet)";
 
     const prompt = `You are an expert music analyst and crowd psychologist. Review this DJ's live set data.
 
@@ -36,7 +48,7 @@ Provide a deep, professional DJ mix analysis. Focus specifically on:
 2. Interesting statistics and actionable insights for the DJ (e.g., "The transition into Harmonic Key X boosted energy by Y%").
 3. A psychological reading of the dancefloor's vibe.
 
-Output ONLY a valid JSON object matching this schema. No markdown fences.
+Output ONLY a valid JSON object matching this exact schema. No markdown fences, no commentary before or after the JSON.
 {
   "overall_score": <int 0-100>,
   "energy_trend": <"ascending" | "descending" | "volatile" | "stable">,
@@ -47,21 +59,44 @@ Output ONLY a valid JSON object matching this schema. No markdown fences.
   "weaknesses": [<str>, <str>],
   "summary_paragraph": <str 4-5 sentences: deep analysis of specific track mixes, crowd psychology, and interesting stats>,
   "next_recommendation": <str>
-}
-`;
+}`;
 
-    const chatCompletion = await groq.chat.completions.create({
-      messages: [{ role: 'user', content: prompt }],
-      model: 'llama-3.3-70b-versatile', // Using the current Llama 3.3 70B for strong reasoning
-      temperature: 0.2,
-      response_format: { type: 'json_object' }
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 1200,
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const reportContent = chatCompletion.choices[0]?.message?.content || '{}';
-    return NextResponse.json(JSON.parse(reportContent));
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      return NextResponse.json(
+        { error: "Empty model response" },
+        { status: 500 },
+      );
+    }
 
-  } catch (error: any) {
-    console.error('Groq Analysis Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    const raw = textBlock.text.trim();
+    // Haiku sometimes wraps in ```json fences despite instructions — strip them
+    const stripped = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+
+    try {
+      return NextResponse.json(JSON.parse(stripped));
+    } catch (parseErr) {
+      console.error("Failed to parse analysis JSON:", stripped);
+      return NextResponse.json(
+        { error: "Model returned invalid JSON", raw: stripped },
+        { status: 500 },
+      );
+    }
+  } catch (error: unknown) {
+    console.error("Anthropic Analysis Error:", error);
+    if (error instanceof Anthropic.APIError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status ?? 500 },
+      );
+    }
+    const message = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

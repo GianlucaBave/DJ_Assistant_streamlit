@@ -8,10 +8,12 @@ It combines environmental scanning (crowd energy and density) with AI-powered tr
 recommendations and automated performance reporting.
 
 2. CORE ARCHITECTURE
-- Framework: Next.js (React 19 + TypeScript 5)
-- Styling: Tailwind CSS (Modern Dark Mode Interface)
-- AI Engine: Groq SDK (Powered by Llama-3.3-70B-Versatile)
-- Data Model: Static JSON libraries for Tracks and Curated Playlists.
+- Framework: Next.js 16 (React 19 + TypeScript 5)
+- Styling: Tailwind CSS 4 (Modern Dark Mode Interface)
+- AI Engine: Anthropic Claude Haiku 4.5 (native tool use, streaming)
+- RAG: @xenova/transformers with all-MiniLM-L6-v2 (384-dim, local)
+- Audio: Web Audio API (live RMS) + HTTP byte-range MP3 streaming
+- Data Model: Static JSON + pre-computed embedding index.
 
 3. KEY FEATURES
 
@@ -47,10 +49,11 @@ E. REPORTING SYSTEM
 - Custom Template: Sophisticated layout including charts, summaries, and actionable insights.
 
 4. TECHNICAL SPECIFICATIONS
-- Environment Variables: Required `GROQ_API_KEY` for AI functionalities.
+- Environment Variables: Required `ANTHROPIC_API_KEY` for AI functionalities.
 - Route Handlers:
-  - `/api/chat`: Handles streaming LLM interactions with strict library context.
-  - `/api/analyze`: Processes session data for deep-dive set reporting.
+  - `/api/chat`: Tool-calling agent loop with NDJSON streaming (6 tools, up to 6 turns).
+  - `/api/analyze`: Processes session data for deep-dive set reporting (structured JSON).
+  - `/api/audio/[filename]`: Streams MP3s from /songs/ with HTTP byte-range support for seeking.
 - Production Optimized: Configured for seamless deployment on Vercel with automatic redeploy on push.
 
 5. FILE STRUCTURE

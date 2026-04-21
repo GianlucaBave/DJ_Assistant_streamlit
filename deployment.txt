@@ -1,0 +1,1 @@
+https://dj-assistant-streamlit.vercel.app/

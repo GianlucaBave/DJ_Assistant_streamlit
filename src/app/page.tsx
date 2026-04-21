@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import tracksData from "@/data/tracks.json";
 import playlistsData from "@/data/playlists.json";
 import { Track, Playlist } from "@/lib/types";
@@ -29,24 +29,38 @@ export default function Dashboard() {
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [activePlaylist, setActivePlaylist] = useState<Playlist | null>(null);
-  
-  const router = useRouter();
 
-  // Stable bar configs — generated once, not on every energy re-render (avoids jolt)
-  const barConfigs = useMemo(() => {
-    return Array.from({ length: 18 }, () => ({
-      variance: Math.random() * 0.6 + 0.4,
-      duration: 0.12 + Math.random() * 0.28,
-      delay: Math.random() * 0.3,
-    }));
-  }, []);
+  // Audio playback state
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [userHasInteracted, setUserHasInteracted] = useState(false);
+
+  // Web Audio analyser for real-time energy extraction from the playing MP3.
+  // Replaces the Math.random() simulation with RMS loudness measured off the
+  // actual audio buffer.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const [liveAudioEnergy, setLiveAudioEnergy] = useState<number | null>(null);
+
+  // Simulated camera feed — when "connected", a looping DJ-set video takes over
+  // the Live Floor Scan card to make the crowd-detection feel more grounded.
+  const [cameraConnected, setCameraConnected] = useState(false);
+
+  // Song picker state (Browse Library section in the left sidebar)
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState("");
+
+  const router = useRouter();
 
   useEffect(() => {
     setIsMounted(true);
-    
+
     // Stop timer if report is generating
     if (isGeneratingReport) return;
-    
+
     // Start Live Set Timer
     const timer = setInterval(() => {
       setElapsedSeconds(prev => prev + 1);
@@ -54,17 +68,155 @@ export default function Dashboard() {
     return () => clearInterval(timer);
   }, [isGeneratingReport]);
 
+  // Load the current track's MP3 and (after first user interaction) auto-play
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const file = currentTrack.file;
+    if (!file) {
+      audio.removeAttribute("src");
+      audio.load();
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setDuration(0);
+      return;
+    }
+
+    audio.src = `/api/audio/${encodeURIComponent(file)}`;
+    audio.load();
+    if (userHasInteracted) {
+      audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    }
+  }, [currentTrack, userHasInteracted]);
+
+  const togglePlayPause = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setUserHasInteracted(true);
+    // Resume audio context if it was created in suspended state (autoplay policy)
+    if (audioCtxRef.current?.state === "suspended") {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+    if (audio.paused) {
+      audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    } else {
+      audio.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const seekTo = (seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio || !isFinite(seconds)) return;
+    audio.currentTime = seconds;
+    setCurrentTime(seconds);
+  };
+
+  const formatTime = (s: number) => {
+    if (!isFinite(s) || s < 0) return "0:00";
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  // Minimal markdown rendering: **bold** → <strong>. Newlines preserved via
+  // whitespace-pre-wrap on the bubble container.
+  const renderChatContent = (content: string) => {
+    const parts = content.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, idx) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return (
+          <strong key={idx} className="font-bold text-white">
+            {part.slice(2, -2)}
+          </strong>
+        );
+      }
+      return <span key={idx}>{part}</span>;
+    });
+  };
+
+  // Auto-scroll the chat to the newest message
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    chatScrollRef.current?.scrollTo({
+      top: chatScrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [chatMessages]);
+
+  // Wire a Web Audio AnalyserNode to the <audio> element and drive liveAudioEnergy
+  // from real-time RMS. Must run AFTER user interaction (autoplay policy).
+  useEffect(() => {
+    if (!userHasInteracted || !audioRef.current) return;
+    if (audioCtxRef.current) return; // already wired
+
+    const AudioCtxCtor = (window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext) as typeof AudioContext;
+    if (!AudioCtxCtor) return;
+
+    const ctx = new AudioCtxCtor();
+    const source = ctx.createMediaElementSource(audioRef.current);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.6;
+    source.connect(analyser);
+    analyser.connect(ctx.destination); // keep audible
+
+    audioCtxRef.current = ctx;
+    analyserRef.current = analyser;
+    audioSourceRef.current = source;
+
+    const buf = new Uint8Array(analyser.fftSize);
+    let lastUpdate = 0;
+    let raf = 0;
+    const loop = (ts: number) => {
+      if (!analyserRef.current) return;
+      analyserRef.current.getByteTimeDomainData(buf);
+      // RMS deviation from silent center (128)
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / buf.length); // 0..1
+      // Throttle state updates to ~4 Hz
+      if (ts - lastUpdate > 250) {
+        lastUpdate = ts;
+        // Non-linear mapping: RMS tends to sit around 0.1-0.3 for house music,
+        // so we expand the visible range.
+        const pct = Math.max(0, Math.min(99, Math.round(rms * 330)));
+        setLiveAudioEnergy(pct);
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(raf);
+    };
+  }, [userHasInteracted]);
+
+  // When real audio is playing, the energy meter reflects the live signal.
+  // When paused / no file, fall back to the simulated track-driven value.
+  const displayEnergy = isPlaying && liveAudioEnergy != null ? liveAudioEnergy : energy;
+
+  // Only suggest tracks we can actually play — tracks without a mapped MP3
+  // would load to silence, which is a worse UX than just not showing them.
+  const playableTracks = tracks.filter((t) => t.file);
   const suggestions = getRecommendations(
-    tracks,
+    playableTracks,
     currentTrack.Tempo,
     energy,
     harmonicMode,
-    currentTrack.Key
+    currentTrack.Key,
   );
 
   const compatibleKeys = getCompatibleKeys(currentTrack.Key);
 
   const playTrack = (track: Track, isAi: boolean = true) => {
+    setUserHasInteracted(true);
     const oldEnergy = energy;
     const oldCrowd = crowdSize;
 
@@ -119,21 +271,36 @@ export default function Dashboard() {
     setFeedbackLog(prev => [`👀 [Log] DJ dismissed '${track["Track Name"]}'. Crowd waiting...`, ...prev].slice(0, 15));
   };
 
-  const skipTrack = (direction: 'next' | 'prev') => {
+  const skipTrack = (direction: "next" | "prev") => {
     let listToNavigate = tracks;
     if (activePlaylist) {
-       listToNavigate = activePlaylist.tracks.map((trackName: string) => tracks.find(t => t["Track Name"] === trackName)).filter(Boolean) as Track[];
+      listToNavigate = activePlaylist.tracks
+        .map((trackName: string) => tracks.find((t) => t["Track Name"] === trackName))
+        .filter(Boolean) as Track[];
     }
-    
+
     if (listToNavigate.length === 0) return;
 
-    const currentIndex = listToNavigate.findIndex(t => t["Track Name"] === currentTrack["Track Name"]);
-    let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
-    
-    if (nextIndex >= listToNavigate.length) nextIndex = 0;
-    if (nextIndex < 0) nextIndex = listToNavigate.length - 1;
-    
-    playTrack(listToNavigate[nextIndex], false);
+    // Skip over tracks with no MP3 file so we never silently land on a dead track.
+    const playableList = listToNavigate.filter((t) => t.file);
+    if (playableList.length === 0) {
+      // Nothing playable in this playlist — fall back to any playable track
+      const anyPlayable = tracks.find((t) => t.file);
+      if (anyPlayable) playTrack(anyPlayable, false);
+      return;
+    }
+
+    const currentIdxInPlayable = playableList.findIndex(
+      (t) => t["Track Name"] === currentTrack["Track Name"],
+    );
+    const step = direction === "next" ? 1 : -1;
+    // If the current track isn't in the playable list (e.g. user loaded something
+    // outside the playlist), start from the top of the playable list.
+    let nextIdx = currentIdxInPlayable === -1 ? 0 : currentIdxInPlayable + step;
+    if (nextIdx >= playableList.length) nextIdx = 0;
+    if (nextIdx < 0) nextIdx = playableList.length - 1;
+
+    playTrack(playableList[nextIdx], false);
   };
 
   const handleViewReport = async () => {
@@ -175,53 +342,131 @@ export default function Dashboard() {
     }
   };
 
+  // Execute a client-side action that Claude requested via a tool call.
+  const executeAgentAction = (tool: string, args: Record<string, unknown>) => {
+    setUserHasInteracted(true);
+    switch (tool) {
+      case "playTrack": {
+        const name = String(args.trackName ?? "");
+        const t = tracks.find((x) => x["Track Name"] === name);
+        if (t) {
+          playTrack(t, true);
+          setFeedbackLog((prev) => [`🤖 [Agent] queued '${name}'`, ...prev].slice(0, 15));
+        } else {
+          setFeedbackLog((prev) => [`⚠️ [Agent] unknown track: '${name}'`, ...prev].slice(0, 15));
+        }
+        break;
+      }
+      case "pauseTrack": {
+        audioRef.current?.pause();
+        setFeedbackLog((prev) => ["🤖 [Agent] paused deck", ...prev].slice(0, 15));
+        break;
+      }
+      case "skipNext": {
+        skipTrack("next");
+        setFeedbackLog((prev) => ["🤖 [Agent] skipped forward", ...prev].slice(0, 15));
+        break;
+      }
+      case "skipPrevious": {
+        skipTrack("prev");
+        setFeedbackLog((prev) => ["🤖 [Agent] skipped back", ...prev].slice(0, 15));
+        break;
+      }
+      case "switchPlaylist": {
+        const id = String(args.playlistId ?? "");
+        const pl = playlists.find((p) => p.id === id);
+        if (pl) {
+          setActivePlaylist(pl);
+          const first = tracks.find((t) => t["Track Name"] === pl.tracks[0]);
+          if (first) playTrack(first, false);
+          setFeedbackLog((prev) => [`🤖 [Agent] switched to '${pl.name}'`, ...prev].slice(0, 15));
+        }
+        break;
+      }
+    }
+  };
+
   const sendChatMessage = async () => {
     if (!chatInput.trim() || isChatLoading) return;
-    const userMsg = { role: 'user' as const, content: chatInput.trim() };
+    const userMsg = { role: "user" as const, content: chatInput.trim() };
     const updatedMsgs = [...chatMessages, userMsg];
     setChatMessages(updatedMsgs);
-    setChatInput('');
+    setChatInput("");
     setIsChatLoading(true);
-    
+    setUserHasInteracted(true);
+
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: updatedMsgs,
           currentTrack,
           energy,
           crowdSize,
-          activePlaylist: activePlaylist ? {
-            name: activePlaylist.name,
-            vibe: activePlaylist.vibe,
-            tracks: activePlaylist.tracks,
-            allPlaylists: playlists.map((p: Playlist) => ({ id: p.id, name: p.name, emoji: p.emoji, vibe: p.vibe, tracks: p.tracks }))
-          } : { allPlaylists: playlists.map((p: Playlist) => ({ id: p.id, name: p.name, emoji: p.emoji, vibe: p.vibe, tracks: p.tracks })) }
-        })
+          activePlaylistId: activePlaylist?.id ?? null,
+        }),
       });
 
-      if (!res.ok || !res.body) throw new Error('Chat stream error');
-      
+      if (!res.ok || !res.body) throw new Error("Chat stream error");
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let assistantContent = '';
-      // Add placeholder assistant message
-      setChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-      
+      let buffer = "";
+      let assistantText = "";
+      setChatMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
+      // NDJSON: parse one event per line
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        assistantContent += decoder.decode(value, { stream: true });
-        // Update last assistant message in place
-        setChatMessages(prev => {
-          const msgs = [...prev];
-          msgs[msgs.length - 1] = { role: 'assistant', content: assistantContent };
-          return msgs;
-        });
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let ev: { type: string; [k: string]: unknown };
+          try {
+            ev = JSON.parse(line);
+          } catch {
+            continue;
+          }
+
+          if (ev.type === "text") {
+            assistantText += String(ev.text ?? "");
+            setChatMessages((prev) => {
+              const msgs = [...prev];
+              msgs[msgs.length - 1] = { role: "assistant", content: assistantText };
+              return msgs;
+            });
+          } else if (ev.type === "tool_use") {
+            // Surface server-side tool use in the feedback log (UX signal)
+            const tool = String(ev.tool ?? "");
+            if (tool === "searchTracks") {
+              const q = (ev.args as { query?: string } | undefined)?.query ?? "";
+              setFeedbackLog((prev) => [`🔍 [RAG] searching: "${q}"`, ...prev].slice(0, 15));
+            }
+          } else if (ev.type === "action") {
+            executeAgentAction(
+              String(ev.tool ?? ""),
+              (ev.args as Record<string, unknown>) ?? {},
+            );
+          } else if (ev.type === "error") {
+            assistantText += `\n\n⚠️ ${String(ev.message ?? "error")}`;
+            setChatMessages((prev) => {
+              const msgs = [...prev];
+              msgs[msgs.length - 1] = { role: "assistant", content: assistantText };
+              return msgs;
+            });
+          }
+        }
       }
     } catch (err) {
-      setChatMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Errore di connessione. Riprova.' }]);
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "⚠️ Connection error. Retry." },
+      ]);
     } finally {
       setIsChatLoading(false);
     }
@@ -229,6 +474,19 @@ export default function Dashboard() {
 
   return (
     <main className="relative h-screen bg-[#050505] text-white p-4 font-sans selection:bg-cyan-500/30 overflow-hidden flex flex-col">
+      {/* Hidden audio element — wired to currentTrack.file via effect above */}
+      <audio
+        ref={audioRef}
+        preload="metadata"
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onTimeUpdate={(e) => setCurrentTime((e.target as HTMLAudioElement).currentTime)}
+        onLoadedMetadata={(e) => setDuration((e.target as HTMLAudioElement).duration)}
+        onEnded={() => {
+          setIsPlaying(false);
+          skipTrack('next');
+        }}
+      />
       {/* Main Content Dashboard */}
       <div className="relative z-10 flex-1 max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4 w-full h-full">
         
@@ -259,10 +517,12 @@ export default function Dashboard() {
                     key={pl.id}
                     onClick={() => {
                       setActivePlaylist(pl.id === activePlaylist?.id ? null : pl);
-                      // Auto-load first track of playlist
+                      // Auto-load first *playable* track of playlist (skip any without MP3)
                       if (pl.id !== activePlaylist?.id) {
-                        const firstTrack = tracks.find(t => t["Track Name"] === pl.tracks[0]);
-                        if (firstTrack) playTrack(firstTrack, false);
+                        const firstPlayable = pl.tracks
+                          .map((name) => tracks.find((t) => t["Track Name"] === name))
+                          .find((t): t is Track => !!t && !!t.file);
+                        if (firstPlayable) playTrack(firstPlayable, false);
                       }
                     }}
                     className={`text-left px-2 py-1.5 rounded-lg border text-[10px] transition-all ${
@@ -281,6 +541,89 @@ export default function Dashboard() {
               )}
             </div>
 
+
+            {/* Browse Library — manual song picker (playable tracks only) */}
+            <div className="flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsLibraryOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              >
+                <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest flex items-center gap-1.5">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.657-1.79 3-4 3s-4-1.343-4-3 1.79-3 4-3 4 1.343 4 3zm12-3c0 1.657-1.79 3-4 3s-4-1.343-4-3 1.79-3 4-3 4 1.343 4 3zM9 10l12-3" />
+                  </svg>
+                  Browse Library
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-mono text-white/30">{playableTracks.length}</span>
+                  <svg className={`w-3 h-3 text-white/40 transition-transform ${isLibraryOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </span>
+              </button>
+              {isLibraryOpen && (
+                <div className="mt-1.5 bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+                  <input
+                    type="text"
+                    value={librarySearch}
+                    onChange={(e) => setLibrarySearch(e.target.value)}
+                    placeholder="Search by title, artist, or BPM…"
+                    className="w-full bg-transparent border-b border-white/10 px-2.5 py-1.5 text-[10px] text-white placeholder:text-white/30 focus:outline-none"
+                    autoFocus
+                  />
+                  <div className="max-h-[220px] overflow-y-auto custom-scrollbar">
+                    {(() => {
+                      const q = librarySearch.trim().toLowerCase();
+                      const filtered = playableTracks.filter((t) => {
+                        if (!q) return true;
+                        const hay = [
+                          t["Track Name"],
+                          t["Artist Name(s)"],
+                          t.Genres ?? "",
+                          String(t.Tempo),
+                          t.Key,
+                        ]
+                          .join(" ")
+                          .toLowerCase();
+                        return hay.includes(q);
+                      });
+                      if (filtered.length === 0) {
+                        return <p className="text-[10px] text-white/30 italic p-3 text-center">No match.</p>;
+                      }
+                      return filtered.map((t) => {
+                        const isCurrent = t["Track Name"] === currentTrack["Track Name"];
+                        return (
+                          <button
+                            key={t["Track Name"]}
+                            type="button"
+                            onClick={() => {
+                              playTrack(t, false);
+                              setIsLibraryOpen(false);
+                              setLibrarySearch("");
+                            }}
+                            className={`w-full text-left px-2.5 py-1.5 flex items-center justify-between gap-2 border-b border-white/5 last:border-b-0 transition-colors ${
+                              isCurrent ? "bg-cyan-500/10" : "hover:bg-white/5"
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-[10px] font-bold truncate ${isCurrent ? "text-cyan-300" : "text-white/80"}`}>
+                                {t["Track Name"]}
+                              </p>
+                              <p className="text-[9px] text-white/40 truncate">{t["Artist Name(s)"]}</p>
+                            </div>
+                            <div className="flex-shrink-0 flex items-center gap-1 text-[8px] font-mono">
+                              <span className="px-1 py-0.5 bg-cyan-500/10 text-cyan-400/80 rounded">{t.Tempo}</span>
+                              <span className="px-1 py-0.5 bg-fuchsia-500/10 text-fuchsia-400/80 rounded">{t.Key}</span>
+                            </div>
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Now Playing - Redesigned Card */}
             <div className="p-3 bg-white/5 rounded-xl border border-white/10 relative overflow-hidden flex-shrink-0">
@@ -321,20 +664,35 @@ export default function Dashboard() {
                 </p>
                 {activePlaylist && <span className="text-[8px] text-fuchsia-400 truncate max-w-[80px]">{activePlaylist.emoji} {activePlaylist.name}</span>}
               </div>
-              <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
+              <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
                 {chatMessages.length === 0 ? (
-                  <div className="text-center py-4">
-                    <p className="text-[10px] text-white/30 italic">{activePlaylist ? `Ask me about "${activePlaylist.name}" order or alternatives...` : 'Select a playlist or ask about vibes...'}</p>
+                  <div className="px-1 py-3 space-y-2">
+                    <p className="text-[10px] text-white/40 italic">
+                      {activePlaylist
+                        ? `Ask about "${activePlaylist.name}" or give me a command.`
+                        : "Select a playlist or just tell me what you want."}
+                    </p>
+                    <div className="space-y-1 pt-1">
+                      <p className="text-[9px] uppercase font-bold text-white/20 tracking-widest">Try</p>
+                      <ul className="space-y-1 text-[10px] text-white/50">
+                        <li>• &quot;find me something uplifting at 128 BPM and play it&quot;</li>
+                        <li>• &quot;peak hour now&quot;</li>
+                        <li>• &quot;skip&quot;  /  &quot;pause&quot;</li>
+                        <li>• &quot;bridge into afro-house&quot;</li>
+                      </ul>
+                    </div>
                   </div>
                 ) : (
                   chatMessages.map((msg, i) => (
                     <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[90%] text-[10px] leading-relaxed px-2.5 py-2 rounded-xl ${
+                      <div className={`max-w-[90%] text-[11px] leading-[1.55] px-3 py-2 rounded-xl whitespace-pre-wrap break-words ${
                         msg.role === 'user'
                           ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/20'
                           : 'bg-white/5 text-white/80 border border-white/10'
                       }`}>
-                        {msg.content || <span className="opacity-50 animate-pulse">●●●</span>}
+                        {msg.content
+                          ? renderChatContent(msg.content)
+                          : <span className="opacity-50 animate-pulse">●●●</span>}
                       </div>
                     </div>
                   ))
@@ -367,43 +725,102 @@ export default function Dashboard() {
 
         {/* Main Dashboard */}
         <section className="lg:col-span-6 flex flex-col h-full gap-4 overflow-hidden">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-shrink-0">
-             <div className="bg-[#111111] border border-white/5 p-4 rounded-2xl">
-                <p className="text-[10px] text-white/40 uppercase font-bold mb-1">Energy Level</p>
-                <p className="text-3xl font-black text-cyan-400">{energy.toFixed(0)}%</p>
-                <div className="w-full h-1 bg-white/5 mt-3 rounded-full overflow-hidden">
-                  <div className="h-full bg-cyan-500 transition-all duration-500" style={{ width: `${energy}%` }} />
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_2.2fr_1fr] gap-4 flex-shrink-0">
+             <div className="bg-[#111111] border border-white/5 p-4 rounded-2xl min-h-[180px] flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <p className="text-[10px] text-white/40 uppercase font-bold">Energy Level</p>
+                  {isPlaying && liveAudioEnergy != null && (
+                    <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30" title="Live RMS from the actual audio signal">
+                      LIVE
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <p className="text-5xl font-black text-cyan-400 leading-none">{displayEnergy.toFixed(0)}<span className="text-2xl text-cyan-400/60">%</span></p>
+                  <div className="w-full h-1 bg-white/5 mt-3 rounded-full overflow-hidden">
+                    <div className="h-full bg-cyan-500 transition-all duration-500" style={{ width: `${displayEnergy}%` }} />
+                  </div>
                 </div>
              </div>
 
              {/* Live Floor Scan - Center Header */}
-             <div className="bg-[#111111] border border-white/5 p-4 rounded-2xl h-full relative overflow-hidden flex items-end justify-center gap-[5px] min-h-[96px]">
+             <div className="bg-[#111111] border border-white/5 p-4 rounded-2xl h-full relative overflow-hidden flex items-end justify-center gap-[5px] min-h-[180px]">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(0,255,255,0.05),transparent)] pointer-events-none" />
-                <div className="absolute top-4 left-4 flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-                  <span className="text-[9px] font-bold text-white/40 uppercase tracking-widest">Live Floor Scan</span>
-                </div>
-                {barConfigs.map((cfg, i) => {
-                  const maxBarHeight = (energy / 100) * 50 + 10;
-                  const barHeightPct = Math.max(6, maxBarHeight * cfg.variance);
-                  const opacity = (energy / 100) * 0.7 + 0.3;
-                  return (
-                    <div key={i} className="flex-shrink-0 rounded-full bg-gradient-to-b from-cyan-400 via-cyan-500 to-fuchsia-500"
-                      style={{ width: '4px', height: `${barHeightPct}%`, opacity, transformOrigin: 'center', animationName: 'equalizer-pulse', animationDuration: `${cfg.duration}s`, animationIterationCount: 'infinite', animationDirection: 'alternate', animationTimingFunction: 'ease-in-out', animationDelay: `${cfg.delay}s` }}
+
+                {/* Live camera feed (simulated by a looping DJ-set video) */}
+                {cameraConnected && (
+                  <>
+                    <video
+                      src="/videos/dj-set-app.mp4"
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="absolute inset-0 w-full h-full object-cover"
                     />
-                  );
-                })}
+                    {/* Dark vignette + CRT scanline feel for UX flavour */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none" />
+                    <div className="absolute inset-0 bg-[repeating-linear-gradient(0deg,rgba(255,255,255,0.04)_0px,rgba(255,255,255,0.04)_1px,transparent_1px,transparent_3px)] pointer-events-none mix-blend-overlay opacity-50" />
+                  </>
+                )}
+
+                {/* Header badge */}
+                <div className="absolute top-3 left-3 flex items-center gap-2 z-10">
+                  <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+                  <span className="text-[9px] font-bold text-white/60 uppercase tracking-widest">
+                    Live Floor Scan
+                  </span>
+                  {cameraConnected && (
+                    <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">
+                      CAM LIVE
+                    </span>
+                  )}
+                </div>
+
+                {/* Disconnect chip (top-right when connected) */}
+                {cameraConnected && (
+                  <button
+                    type="button"
+                    onClick={() => setCameraConnected(false)}
+                    className="absolute top-3 right-3 z-10 text-[8px] font-mono px-2 py-0.5 rounded bg-black/50 hover:bg-black/70 text-white/60 hover:text-white border border-white/10 transition-colors"
+                    title="Disconnect camera"
+                  >
+                    ✕ DISCONNECT
+                  </button>
+                )}
+
+                {/* Empty state + Connect Camera button (centered when off) */}
+                {!cameraConnected && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3">
+                    <svg className="w-10 h-10 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      <line x1="3" y1="3" x2="21" y2="21" strokeWidth={1.5} strokeLinecap="round" />
+                    </svg>
+                    <button
+                      type="button"
+                      onClick={() => setCameraConnected(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 text-[9px] font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(0,255,255,0.15)]"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      Connect Camera
+                    </button>
+                  </div>
+                )}
              </div>
 
-             <div className="bg-[#111111] border border-white/5 p-4 rounded-2xl">
-                <p className="text-[10px] text-white/40 uppercase font-bold mb-1">People Detected</p>
-                <p className="text-3xl font-black text-fuchsia-500">{crowdSize}</p>
-                <p className="text-[9px] text-white/40 mt-1 font-mono uppercase tracking-tighter opacity-50 truncate">DANCEFLOOR OCCUPANCY: HIGH</p>
+             <div className="bg-[#111111] border border-white/5 p-4 rounded-2xl min-h-[180px] flex flex-col justify-between">
+                <p className="text-[10px] text-white/40 uppercase font-bold">People Detected</p>
+                <div>
+                  <p className="text-5xl font-black text-fuchsia-500 leading-none">{crowdSize}</p>
+                  <p className="text-[9px] text-white/40 mt-3 font-mono uppercase tracking-tighter opacity-60 truncate">DANCEFLOOR OCCUPANCY: {crowdSize > 250 ? 'PACKED' : crowdSize > 120 ? 'HIGH' : 'MEDIUM'}</p>
+                </div>
              </div>
           </div>
 
           {/* Center Component: Spinning Vinyl Player */}
-          <div className="bg-[#111111] border border-white/5 rounded-2xl flex-shrink-0 relative overflow-hidden flex flex-col items-center justify-center p-6 h-64 min-h-[256px]">
+          <div className="bg-[#111111] border border-white/5 rounded-2xl flex-shrink-0 relative overflow-hidden flex flex-col items-center justify-center p-6 pb-8 h-72 min-h-[288px]">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(217,70,239,0.05),transparent)] pointer-events-none" />
             
             <div className="flex items-center justify-between w-full max-w-md z-10">
@@ -415,24 +832,49 @@ export default function Dashboard() {
                 <svg className="w-6 h-6 group-hover:-translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
               </button>
 
-              {/* Spinning Vinyl Record */}
-              <div className="relative w-40 h-40 flex items-center justify-center flex-shrink-0 mx-4">
+              {/* Spinning Vinyl Record (click to play/pause) */}
+              <button
+                type="button"
+                onClick={togglePlayPause}
+                aria-label={isPlaying ? "Pause" : "Play"}
+                className="relative w-40 h-40 flex items-center justify-center flex-shrink-0 mx-4 group cursor-pointer"
+              >
                 {/* Vinyl Grooves */}
-                <div className="absolute inset-0 rounded-full border-[20px] border-[#0a0a0a] shadow-2xl animate-[spin_4s_linear_infinite]"
-                     style={{
-                       background: 'radial-gradient(circle, #1a1a1a 30%, #050505 70%)',
-                     }}>
+                <div
+                  className="absolute inset-0 rounded-full border-[20px] border-[#0a0a0a] shadow-2xl animate-[spin_4s_linear_infinite]"
+                  style={{
+                    background: 'radial-gradient(circle, #1a1a1a 30%, #050505 70%)',
+                    animationPlayState: isPlaying ? 'running' : 'paused',
+                  }}
+                >
                   <div className="absolute inset-0 rounded-full border border-white/5 m-2" />
                   <div className="absolute inset-0 rounded-full border border-white/5 m-4" />
                   <div className="absolute inset-0 rounded-full border border-white/5 m-6" />
                 </div>
                 {/* Vinyl Label */}
-                <div className="absolute w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-fuchsia-500 animate-[spin_4s_linear_infinite] flex items-center justify-center shadow-inner">
+                <div
+                  className="absolute w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-fuchsia-500 animate-[spin_4s_linear_infinite] flex items-center justify-center shadow-inner"
+                  style={{ animationPlayState: isPlaying ? 'running' : 'paused' }}
+                >
                   <div className="w-3 h-3 bg-[#050505] rounded-full" />
                 </div>
                 {/* Tonearm Accents */}
                 <div className="absolute -right-6 top-4 w-2 h-20 bg-gradient-to-b from-zinc-700 to-zinc-900 rounded-full rotate-[15deg] origin-top opacity-50 shadow-lg pointer-events-none" />
-              </div>
+                {/* Play/pause glyph overlay (fades in when paused OR on hover) */}
+                <div
+                  className={`absolute inset-0 flex items-center justify-center rounded-full transition-opacity duration-200 ${
+                    isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+                  }`}
+                >
+                  <div className="w-12 h-12 rounded-full bg-black/70 backdrop-blur-sm flex items-center justify-center border border-white/20">
+                    {isPlaying ? (
+                      <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                    ) : (
+                      <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    )}
+                  </div>
+                </div>
+              </button>
 
               {/* Next Track Button */}
               <button 
@@ -444,9 +886,30 @@ export default function Dashboard() {
             </div>
             
             {/* Track Info Overlay */}
-            <div className="mt-6 text-center z-10 w-full max-w-sm flex flex-col items-center">
+            <div className="mt-6 text-center z-10 w-full max-w-sm flex flex-col items-center gap-2">
                <h3 className="font-black text-lg truncate bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">{currentTrack["Track Name"]}</h3>
                <p className="text-xs text-white/40 truncate">{currentTrack["Artist Name(s)"]}</p>
+
+               {/* Seek bar (visible when an audio file is mapped) */}
+               {currentTrack.file ? (
+                 <div className="w-full flex items-center gap-2 px-2 mt-1">
+                   <span className="text-[9px] font-mono text-white/40 w-8 text-right">{formatTime(currentTime)}</span>
+                   <input
+                     type="range"
+                     min={0}
+                     max={duration || 0}
+                     step={0.1}
+                     value={currentTime}
+                     onChange={(e) => seekTo(Number(e.target.value))}
+                     className="flex-1 h-1 accent-cyan-400 cursor-pointer"
+                   />
+                   <span className="text-[9px] font-mono text-white/40 w-8">{formatTime(duration)}</span>
+                 </div>
+               ) : (
+                 <div className="text-[9px] font-mono text-white/30 uppercase tracking-widest mt-1">
+                   Preview unavailable · drop MP3 in /songs
+                 </div>
+               )}
             </div>
 
             {/* Harmonic toggle - floating corner */}
@@ -616,7 +1079,7 @@ export default function Dashboard() {
                  GENERATING REPORT
                </h2>
                <p className="text-white/40 text-[10px] uppercase font-mono tracking-widest">
-                 Synthesizing Groq LLM Analysis...
+                 Synthesizing Claude analysis...
                </p>
              </div>
            </div>
