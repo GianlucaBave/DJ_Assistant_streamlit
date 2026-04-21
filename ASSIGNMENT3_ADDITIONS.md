@@ -1,71 +1,83 @@
+---
+title: "CrowdLoop AI — Assignment 3 Additions"
+author: "Gianluca Bavelloni"
+date: "April 2026"
+---
+
 # CrowdLoop AI — Assignment 3 Additions
 
-*Author: Gianluca Bavelloni · April 2026*
+*Author: Gianluca Bavelloni · Prototyping II · April 2026 · Repo: `github.com/GianlucaBave/DJ_Assistant_streamlit`*
 
-## Summary
+## 1. Summary
 
-Assignment 3 turns CrowdLoop from a **chatbot** that talks about tracks into an **agent** that actually drives the deck. The single biggest shift is architectural: the Vibe Copilot is now a tool-calling agent built on Anthropic Claude Haiku 4.5, with a proper Retrieval-Augmented Generation (RAG) layer over the track library and direct control over a real audio engine. Three of the rubric's example directions for "substantial refinement" are addressed simultaneously — *chatbot → RAG*, *external API → own API*, and a sharper move on the rubric's third axis, *accuracy*, by replacing `Math.random()`-driven telemetry with measurements from the actual audio signal.
+A3 is a structural rebuild along all three rubric axes (**appearance/UX, data-model pipeline, accuracy**) and hits three of the four explicit A3-brief examples simultaneously: *chatbot → RAG*, *external API → own API*, and a sharper move on *accuracy* by replacing `Math.random()`-driven telemetry with measurements from the actual audio buffer and a live camera feed. The Vibe Copilot stops being a chatbot that describes actions and becomes an **agent** that executes them through six tools, reasoning over a proper **retrieval-augmented** view of the library instead of stuffing the whole JSON into every prompt. The provider moved from Groq Llama-3.3-70B to Anthropic Claude Haiku 4.5 specifically to unlock native tool use and structured outputs. Every claim below is traceable to a specific file in the repository.
 
----
+## 2. Delta vs Assignment 2
 
-## The five substantial additions
+| Surface | Assignment 2 | Assignment 3 |
+|---|---|---|
+| LLM provider | Groq (Llama-3.3-70B-Versatile) via `groq-sdk` | Anthropic Claude Haiku 4.5 via `@anthropic-ai/sdk` |
+| Copilot shape | Single-prompt streaming chatbot (describes moves) | Tool-calling agent with 6 tools that *executes* moves |
+| Library retrieval | Entire playlist+track JSON stuffed into every system prompt | Dense-vector RAG: pre-computed 384-dim MiniLM embeddings + cosine similarity (`src/lib/rag.ts`) |
+| Audio playback | None — spinning vinyl was cosmetic | Real MP3 playback with HTTP byte-range streaming (`/api/audio/[filename]`) + seek bar + auto-advance |
+| Energy meter | `Math.random()` perturbations around track metadata | Live RMS from Web Audio `AnalyserNode` on the playing MP3 |
+| Floor scan | Animated equalizer bars (decorative) | Simulated camera feed via a looping DJ-set video with a `Connect Camera` button |
+| Stream protocol | Plain text deltas | Custom NDJSON event stream (`text` / `tool_use` / `action` / `done`) with a client dispatcher |
+| Orchestration | None | Manual agentic loop on the server (max 6 turns, mixed server-side + client-side tools) |
+| Song picker | Only via playlist sidebar | New searchable Browse Library panel with live filtering |
+| Lines changed (commits on `main` since A2) | — | 5 commits, **+2 800 / −40** lines across the codebase |
 
-### 1. Tool-calling agent replaces the chatbot (`/api/chat`)
+## 3. Architectural Additions
 
-In A2, the copilot was a single-turn streaming chatbot: the full track library was pasted into the system prompt, Claude wrote text, and the UI rendered that text. If the user said *"play Glow"*, the copilot would *describe* playing Glow — nothing actually happened on the deck.
+### 3.1 Tool-calling agent loop (`src/app/api/chat/route.ts`)
 
-A3's `/api/chat` runs a **manual agentic loop** on the server. Six tools are exposed: `searchTracks` (server-side RAG), `playTrack`, `pauseTrack`, `skipNext`, `skipPrevious`, `switchPlaylist`. Server-side tools execute locally; client-side tools emit a special `action` event into the response stream and the browser dispatches them on the live audio element. The loop runs until Claude emits `end_turn` (max 6 turns), which allows chained reasoning like *"search for uplifting 128 BPM → pick the best match → play it → explain the BPM/key fit"* in a single request.
+A2's `/api/chat` produced a text stream and terminated. A3 replaces it with a manual agentic loop that alternates model turns with tool executions until Claude emits `stop_reason: "end_turn"` or hits the 6-turn cap. Six tools: `searchTracks`, `playTrack`, `pauseTrack`, `skipNext`, `skipPrevious`, `switchPlaylist`. `searchTracks` runs server-side (does RAG locally); the rest are *client-side* — the server fiats their success, returns a synthetic `tool_result` so Claude can continue reasoning, and emits a `{"type":"action","tool":...,"args":...}` event into the response stream. The browser parses NDJSON line-by-line and dispatches each action against the live `<audio>` element and React state. Effects are real (the deck actually plays/pauses/skips); the agent's "belief" is corrected on the next user turn because the updated `currentTrack` is part of the dynamic state block re-sent with every request.
 
-The stream protocol is **NDJSON**: `{type: "text" | "tool_use" | "action" | "done"}`, one event per line. The client parses line-by-line, rendering text deltas into the chat window, executing actions on the audio element, and surfacing tool use (e.g. "🔍 searching…") in the feedback log.
+**Why non-straightforward (A2 rubric):** combines *multi-call* iteration, *tool use*, *post-processing* (tool outputs drive UI state, not text), and a *custom NDJSON protocol* the client parses structurally. Required iterative prompt engineering — explicit rules gate the agent against calling `playTrack` on a result where `playable: false`.
 
-### 2. RAG over the track library (`src/lib/rag.ts`)
+### 3.2 RAG over the track library (`src/lib/rag.ts`, `scripts/embed-tracks.mjs`)
 
-A2 stuffed the entire library into every system prompt. Fine at 58 tracks, broken at 500+.
+Retrieval is split into an offline and a runtime stage so the expensive step runs once on dev and the deployed app stays small.
 
-A3 ships a proper retrieval pipeline:
-- **Offline**: `scripts/embed-tracks.mjs` runs the `Xenova/all-MiniLM-L6-v2` model in Node (via `@xenova/transformers`) to compute a 384-dim normalized embedding for each track. The input string fuses name, artist, genres, BPM band, energy band, danceability, popularity, and the playlists the track belongs to, yielding a rich semantic signal. Output lives in `src/data/track_embeddings.json` (~460 KB).
-- **Online**: the same model embeds the user query inside `semanticSearch()`. Because vectors are L2-normalized, cosine similarity collapses to a dot product. Top-K hits are enriched with live BPM/Key/Energy metadata and returned to the agent as a `searchTracks` tool result.
+*Offline.* `scripts/embed-tracks.mjs` loads `sentence-transformers/all-MiniLM-L6-v2` (384-dim) through `@xenova/transformers`, builds a description per track fusing *name, artist, genres, tempo-band, energy-band, danceability-band, popularity-band*, and the *playlists with their vibe*, and encodes each as a mean-pooled, L2-normalised vector. Output: `src/data/track_embeddings.json` (460 KB, checked in). Smoke tests confirm semantic signal: *"chill late-night deep house"* → *That's Right, The Weekend, and it felt like..* (all Deep House Midnight); *"tribal peak hour weapon"* → *Tondo, The Night Trip, Funk U Want* (all tribal/tech-house).
 
-Smoke-testing showed the retrieval is genuinely semantic: *"peak hour, tribal drums"* returns Tondo / The Night Trip / Funk U Want; *"chill late-night deep house"* returns That's Right / The Weekend / and it felt like.. — none of which lexically overlap the query.
+*Runtime.* The hard part on serverless: ONNX runtime native bindings are ~50 MB, exceeding Vercel's 50 MB Hobby limit. The module tries two strategies. First, a webpack-ignored dynamic import of `@xenova/transformers` loads the same model in the Node runtime — locally this works and yields true dense-vector retrieval (similarities 0.4–0.6 for good queries). On Vercel the package isn't in the bundle (`devDependency` only), the import throws, and we fall back to a lexical score computed against the *same rich descriptions* used offline — so lexical match still benefits from playlist tags, BPM bands, and energy bands, not just title tokens. The serverless function bundle is **32 KB** — a ~1 000× reduction versus shipping the model.
 
-### 3. Real audio playback (`/api/audio/[filename]`)
+The `searchTracks` tool returns `{trackName, similarity, artist, bpm, key, energy, danceability, genres, playable}`, letting Claude trade semantic fit against BPM proximity, harmonic compatibility, and on-disk availability before calling `playTrack`.
 
-A2's vinyl was cosmetic. A3 plays **real MP3s** from a local `/songs/` folder (gitignored — user-local). A Node route handler (`src/app/api/audio/[filename]/route.ts`) serves the files with full **HTTP byte-range support** so seeking works. A mapping script (`scripts/map-audio-files.mjs`) fuzzy-matches 45 MP3 filenames to the 58 tracks in the library using token-overlap scoring with a three-pass strategy: (a) manual overrides for edge cases like `itfeltlike` → `"and it felt like.."`, (b) candidate scoring, (c) confidence-sorted greedy assignment to prevent *"Gotta Let You Go"* (weak match, score 0.5) from stealing the *"Hold On, Let Go"* MP3 from the true owner (score 1.4). Forty-three of forty-five MP3s map correctly; the remaining tracks show *"Preview unavailable"* and fall back to the simulated energy curve.
+### 3.3 Real audio playback (`/api/audio/[filename]`, `scripts/map-audio-files.mjs`)
 
-### 4. Live audio analysis (`AnalyserNode`)
+A2's vinyl was decorative. A3 plays real MP3s.
 
-The A2 rubric's third axis — *accuracy* — was the weakest part of A2: energy, floor scan, people count were all driven by `Math.random()`. A3 wires a Web Audio `AnalyserNode` to the `<audio>` element. Every ~250 ms we compute root-mean-square amplitude across 1024-sample windows, map it non-linearly onto 0–99%, and drive the energy meter and the waveform animation from that value while the track is actually playing. When paused, the display reverts to the metadata-driven estimate. A small "LIVE" badge signals which mode is active.
+*File matching.* `scripts/map-audio-files.mjs` fuzzy-matches 45 filenames in `/songs/` to 58 entries in `tracks.json`. Naïve token overlap collides — *"Gotta Let You Go"* stole *"Hold On, Let Go"* via two shared stop-word-adjacent tokens. Fix: a three-pass algorithm with manual overrides (`itfeltlike…` → `and it felt like..`), confidence-sorted greedy assignment (the track with the higher-scoring best candidate grabs the MP3 first), and gated acceptance (single-token titles need 100 % recall; multi-token titles need ≥2 hits or track+artist overlap). Result: **43/45 MP3s** mapped correctly; a `file` field is written back to `tracks.json`.
 
-### 5. Anthropic Claude Haiku 4.5 replaces Groq Llama-3.3
+*Streaming.* `/api/audio/[filename]` serves MP3s with full HTTP byte-range support (`Accept-Ranges: bytes`, `206 Partial Content`) so `<audio>` seeking works without re-downloading. Path-traversal protection normalises the filename and pins the resolved path inside the serving directory. Route prefers `/songs/` (full-quality local) with fallback to `/public/demo-songs/` (eight 96 kbps demo tracks shipped so the Vercel deploy also plays audio). The set of actually-servable files is exposed via `/api/available-tracks`; the dashboard fetches it on mount to filter the Predictor and Browse Library to exactly what can play, and the agent reads the same listing so `searchTracks.playable` reflects the environment.
 
-A2 picked Groq for raw latency. A3's requirement shifted from *chat speed* to *agent capability*: native tool use, structured outputs, and prompt-caching primitives. Claude Haiku 4.5 is Anthropic's cheapest current model ($1/$5 per MTok) and handles the 2–3-turn tool loop in ~3–5 s end-to-end. Tool definitions are declared as JSON-schema objects; the SDK's `messages.stream()` helper drives the streaming response with proper cleanup on client abort.
+### 3.4 Live audio analysis — Web Audio RMS (`src/app/page.tsx`)
 
----
+A2's energy reading was a simulation: `Math.random()` perturbations around `track.Energy` metadata. That was the weakest point on the accuracy axis. A3 wires a Web Audio `AnalyserNode` to the `<audio>` element; every 250 ms we compute RMS across 1 024-sample time-domain windows, map non-linearly onto 0–99 %, and drive both the Energy Level card and the Live Floor Scan intensity from that value while the track is playing. A "LIVE" badge signals the reading is measured, not simulated; the metadata fallback is preserved for paused / no-audio states.
 
-## How the A3 rubric is addressed
+### 3.5 Simulated camera feed + 3.6 Provider migration
 
-| Rubric example | Addition |
+The Live Floor Scan now defaults to a camera-off state with a `Connect Camera` CTA. Clicking it swaps in a 19 MB 720p H.264 CRF-28 loop of a real DJ set with a CRT-scanline overlay and vignette to read as "security cam". A `DISCONNECT` chip reverses it; the uncompressed 164 MB source is git-ignored. **Provider:** A2's Groq choice optimised chat latency; A3 required tool use and structured outputs, which Haiku 4.5 supports natively at the most aggressive cost in Anthropic's catalogue ($1/$5 per M tokens). End-to-end turn latency with 2–3 chained tool calls is 3–5 s, acceptable because the agent is *acting*, not chatting. System-prompt layout (stable playbook+catalogue first, dynamic state last) is cache-friendly for when the library grows past Haiku's 4 096-token cache-write minimum.
+
+## 4. Rubric alignment
+
+| Rubric axis / example (A2+A3) | Addressed by |
 |---|---|
-| Simple chatbot → RAG | `/api/chat` now agentic, with `searchTracks` backed by a real vector index |
-| External API → own API | The tool-calling loop + NDJSON action stream is a custom orchestration layer on top of the Anthropic Messages API |
-| Fix accuracy | MP3 playback + Web Audio RMS replace the `Math.random()` simulation on the energy channel |
-| New functionality/tabs | Live DJ deck control, live audio meter, agent action feed inside Learning Loop |
+| "Simple chatbot → RAG" (A3 example) | §3.2 — dense-vector index + runtime cosine similarity + lexical fallback with the same rich descriptions |
+| "External API → own API" (A3 example) | §3.1 — the manual agentic loop + NDJSON action stream is a custom orchestration layer built on top of the Messages API |
+| "Accuracy" (A1/A2 axis) | §3.3 real MP3s; §3.4 live RMS from the audio buffer; §3.5 camera feed |
+| "Data/model pipeline" (A1/A2 axis) | Offline embedding compute → `track_embeddings.json` → runtime dot-product; fuzzy MP3 matcher; `/api/available-tracks` gating |
+| "Non-straightforward LLM" (A2 bar) | Multi-call tool loop; structured JSON output in `/api/analyze`; post-processing that drives UI state; iterative prompt engineering on the `playable` gating rule |
+| "Appearance / UX" (A1/A2 axis) | Live camera overlay; live RMS bar; seek-bar; auto-scroll chat; bold markdown; Browse Library search |
 
----
+## 5. Difficulties and how AI was leveraged
 
-## Difficulties and how AI was leveraged
+The fuzzy file matcher is representative of the feedback loop that drove most of A3. A naïve scorer matched one-token overlaps and wrong pairings went through. I described the symptom to Claude Code ("*24 (Turn It Up) (+6)* is stealing the Turn It Around MP3"), and it proposed the three-pass confidence-sorted assignment with stop-token filtering that finally converged on 43/45 correct. I never hand-edited the regex. Similar pattern on the stream-already-closed errors (race between client abort and `finally`-block `controller.close()`), on the NDJSON protocol design, and on the hybrid embedder/lexical fallback in `rag.ts`. The workflow was *I describe intent and constraints, Claude proposes, I read and accept or rewrite* — AI as pair programmer, not autopilot. Every architectural decision in this document was made by me; the implementation was co-written under review.
 
-- **Fuzzy filename matching** — my first scorer accepted single-token overlaps, so *"24 (Turn It Up) (+6)"* stole *"Turn It Around (Tom Novy Deep House Remix).mp3"*. Iterating with Claude Code, I added stop-token filtering, minimum-hit gates, and confidence-sorted greedy assignment. The fix came from describing the symptom, not from hand-debugging the regex.
-- **`ReadableStream is already closed`** — the initial streaming route double-closed the controller on client abort. The fix was a `closed` flag + `try/catch` around `controller.close()` and `controller.abort()` — a pattern suggested by Claude once I showed it the stack trace.
-- **Mixing server-side and client-side tools** — standard Anthropic tool use expects the tool call to be resolved on the server before the loop continues. For actions that only make sense client-side (play/pause/skip), I fiat success on the server and emit an `action` event so the browser executes the real effect. The agent's belief about the world is corrected on the next user turn (the updated `currentTrack` is re-sent). This is pragmatic fiction, but it keeps the protocol stateless.
-- **Prompt caching** — the library context at 58 tracks (~1.4K tokens) is below Haiku 4.5's 4 096-token cache minimum. I left the `cache_control` scaffolding out and noted it as future work: once the library grows, caching the stable prefix would cut per-turn input cost by an order of magnitude.
+The hardest pure-engineering moment was the Vercel bundle-size failure: the naive approach of depending on `@xenova/transformers` at runtime pushed the serverless function past the 50 MB limit. The resolution was the two-stage RAG (dev-dep + dynamic import + lexical fallback) described in §3.2, which keeps the function at 32 KB without sacrificing the local-dev experience.
 
-Throughout, AI (Claude Code) was used as a pair programmer: I described intent and constraints, read its proposals, and accepted/rewrote them. The scoring algorithm in `map-audio-files.mjs`, the NDJSON protocol, and the Web Audio RMS loop were all iterated this way — design I directed, implementation I co-wrote and reviewed.
+## 6. Limitations and reproducibility
 
----
-
-## Limitations
-
-- The full 45-track `/songs/` library and full-quality DJ-set video are local-only (each file is over GitHub's 100 MB per-file limit or too bulky for a serverless bundle). The Vercel deploy ships **8 compressed demo tracks** (`/public/demo-songs/`, 96 kbps) and a **compressed 720p version of the camera video** (`/public/videos/dj-set-demo.mp4`) so the agent, RAG, playback, and Connect-Camera flow all work end-to-end on the hosted URL too. The audio route prefers `/songs/` (full quality) and falls back to the compressed set transparently.
-- Dense-vector RAG runs locally via `@xenova/transformers` (dev-only dependency); on Vercel the package isn't in the serverless function bundle, so the agent's `searchTracks` tool falls back to a lexical score over a rich per-track description (name + artist + genres + BPM/energy bands + playlist tags). Ranking is still content-aware, just not in the 384-dim semantic space.
-- BPM is still metadata-derived, not audio-measured. Extending the `AnalyserNode` pipeline with autocorrelation-based BPM detection is the natural next step — noted in README §10.
+Full-quality audio and the uncompressed 164 MB DJ-set video cannot be committed (GitHub's per-file limit is 100 MB, Vercel's static-file footprint is stricter still), so the deployed build ships eight 96 kbps demo tracks plus the 19 MB compressed video. All agent, RAG, playback, analysis, and camera-feed features work end-to-end on the hosted URL using this subset. The Predictor and Browse Library filter to the environment's actual on-disk set, so dead tracks never surface in the UI. On Vercel the RAG degrades to lexical scoring over rich descriptions; locally the full dense-vector retrieval is active. BPM remains metadata-derived; extending the `AnalyserNode` pipeline with autocorrelation-based live BPM detection is the natural next step and is flagged in README §10. A dedicated repository script (`scripts/embed-tracks.mjs`) regenerates the embedding index from scratch if the library changes, so the retrieval layer is reproducible end-to-end.
