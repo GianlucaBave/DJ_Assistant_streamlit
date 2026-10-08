@@ -661,7 +661,7 @@ Claude Code acted as a pair programmer throughout. The fuzzy-matcher fix, the ND
 
 *Project developed for Prototyping II — Assignment 3 (optional final submission).*
 
-**Author**: Gianluca Bavelloni
+**Author**: BAVE
 **LLM provider**: Anthropic — Claude Haiku 4.5 + pair-programming with Claude Code
 **Retrieval model**: `sentence-transformers/all-MiniLM-L6-v2` (via Xenova's ONNX port)
 **DJ-set video source**: used locally for prototyping, compressed for shareability

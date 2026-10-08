@@ -1,12 +1,12 @@
 ---
 title: "CrowdLoop AI — Assignment 3 Additions"
-author: "Gianluca Bavelloni"
+author: "BAVE"
 date: "April 2026"
 ---
 
 # CrowdLoop AI — Assignment 3 Additions
 
-*Gianluca Bavelloni · Prototyping II · April 2026 · Repo: `github.com/GianlucaBave/DJ_Assistant_streamlit`*
+*BAVE · Prototyping II · April 2026 · Repo: `github.com/GianlucaBave/DJ_Assistant_streamlit`*
 
 ## 1. Summary
 
